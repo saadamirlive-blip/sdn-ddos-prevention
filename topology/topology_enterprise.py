@@ -57,7 +57,7 @@ class EnterpriseTopo(Topo):
     """Enterprise Network Topology - 4 OpenFlow Switches, 13 Hosts"""
     
     def build(self):
-        # Core Switch with standalone failMode to prevent startup freeze
+        # Core Switch
         s0 = self.addSwitch('s0', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
         
         # Edge Switches
@@ -101,29 +101,29 @@ class EnterpriseTopo(Topo):
             'h13': 'ATTACKER'
         }
         
-        # Connect Core Switch to Edge Switches
-        self.addLink(s0, s1, bw=1000, delay='2ms')
-        self.addLink(s0, s2, bw=1000, delay='2ms')
-        self.addLink(s0, s3, bw=1000, delay='2ms')
+        # Connect Core Switch to Edge Switches (Standard fast veth links)
+        self.addLink(s0, s1)
+        self.addLink(s0, s2)
+        self.addLink(s0, s3)
         
         # Connect hosts to Edge S1
-        self.addLink(h1, s1, bw=100, delay='5ms')
-        self.addLink(h2, s1, bw=100, delay='5ms')
-        self.addLink(h3, s1, bw=100, delay='5ms')
-        self.addLink(h4, s1, bw=100, delay='5ms')
-        self.addLink(h5, s1, bw=100, delay='5ms')
+        self.addLink(h1, s1)
+        self.addLink(h2, s1)
+        self.addLink(h3, s1)
+        self.addLink(h4, s1)
+        self.addLink(h5, s1)
         
         # Connect hosts to Edge S2
-        self.addLink(h6, s2, bw=100, delay='5ms')
-        self.addLink(h7, s2, bw=100, delay='5ms')
-        self.addLink(h8, s2, bw=100, delay='5ms')
-        self.addLink(h9, s2, bw=100, delay='5ms')
-        self.addLink(h10, s2, bw=100, delay='5ms')
+        self.addLink(h6, s2)
+        self.addLink(h7, s2)
+        self.addLink(h8, s2)
+        self.addLink(h9, s2)
+        self.addLink(h10, s2)
         
         # Connect hosts to Edge S3
-        self.addLink(h11, s3, bw=100, delay='5ms')
-        self.addLink(h12, s3, bw=100, delay='5ms')
-        self.addLink(h13, s3, bw=100, delay='5ms')
+        self.addLink(h11, s3)
+        self.addLink(h12, s3)
+        self.addLink(h13, s3)
 
 def run_enterprise_simulation():
     """Run the enterprise network simulation"""
@@ -158,10 +158,10 @@ def run_enterprise_simulation():
     print("TOPOLOGY INFORMATION")
     print("-"*70)
     print("\nSwitches:")
-    print("  s0 - Core Switch (1000 Mbps)")
-    print("  s1 - Edge S1 (100 Mbps) - Business")
-    print("  s2 - Edge S2 (100 Mbps) - Business")
-    print("  s3 - Edge S3 (100 Mbps) - Servers")
+    print("  s0 - Core Switch")
+    print("  s1 - Edge S1 - Business")
+    print("  s2 - Edge S2 - Business")
+    print("  s3 - Edge S3 - Servers")
     
     print("\nHosts:")
     for host in net.hosts:
