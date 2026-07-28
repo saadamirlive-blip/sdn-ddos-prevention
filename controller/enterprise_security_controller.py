@@ -1,6 +1,6 @@
 """
 Enterprise SDN Security Controller
-Implements Container-Safe OpenFlow 1.3 L2 Learning, ML Detection, and Automated Containment
+Implements Pre-Populated L2 Routing, Container-Safe Forwarding, ML Detection, and Automated Containment
 """
 
 from ryu.base import app_manager
@@ -24,17 +24,59 @@ logger = logging.getLogger(__name__)
 class EnterpriseSecurityController(app_manager.RyuApp):
     """
     Enterprise Security Controller for OpenFlow 1.3
-    Features: Container-Safe L2 Forwarding, DDoS Detection, Automated Containment
+    Features: Pre-Populated L2 Routing, Container-Safe Forwarding, DDoS Detection, Automated Containment
     """
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(EnterpriseSecurityController, self).__init__(*args, **kwargs)
         
-        # Datapath management and MAC learning tables
+        # Datapath management
         self.datapaths = {}
-        self.mac_to_port = {}
         
+        # Pre-populated MAC-to-Port maps for 4-switch enterprise topology
+        # DPID 1 = s0 (Core), DPID 2 = s1 (Edge 1), DPID 3 = s2 (Edge 2), DPID 4 = s3 (Edge 3)
+        self.mac_to_port = {
+            1: {},  # s0 Core
+            2: {},  # s1 Edge 1
+            3: {},  # s2 Edge 2
+            4: {}   # s3 Edge 3
+        }
+        
+        # Populate s1 (DPID 2): h1-h5 local (ports 2-6), all others via port 1 (s0)
+        for i in range(1, 14):
+            mac = f"00:00:00:00:00:{i:02x}"
+            if 1 <= i <= 5:
+                self.mac_to_port[2][mac] = i + 1
+            else:
+                self.mac_to_port[2][mac] = 1
+
+        # Populate s2 (DPID 3): h6-h10 local (ports 2-6), all others via port 1 (s0)
+        for i in range(1, 14):
+            mac = f"00:00:00:00:00:{i:02x}"
+            if 6 <= i <= 10:
+                self.mac_to_port[3][mac] = (i - 5) + 1
+            else:
+                self.mac_to_port[3][mac] = 1
+
+        # Populate s3 (DPID 4): h11-h13 local (ports 2-4), all others via port 1 (s0)
+        for i in range(1, 14):
+            mac = f"00:00:00:00:00:{i:02x}"
+            if 11 <= i <= 13:
+                self.mac_to_port[4][mac] = (i - 10) + 1
+            else:
+                self.mac_to_port[4][mac] = 1
+
+        # Populate s0 Core (DPID 1): h1-h5 via port 1 (s1), h6-h10 via port 2 (s2), h11-h13 via port 3 (s3)
+        for i in range(1, 14):
+            mac = f"00:00:00:00:00:{i:02x}"
+            if 1 <= i <= 5:
+                self.mac_to_port[1][mac] = 1
+            elif 6 <= i <= 10:
+                self.mac_to_port[1][mac] = 2
+            elif 11 <= i <= 13:
+                self.mac_to_port[1][mac] = 3
+
         # Flow statistics
         self.flow_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
         
@@ -62,7 +104,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Initialize background monitoring
         self.monitor_thread = hub.spawn(self._monitor)
         
-        logger.info("✅ Enterprise Security Controller Initialized")
+        logger.info("✅ Enterprise Security Controller Initialized (Pre-Populated L2 Routing + ML Security)")
         logger.info(f"   ML Model Loaded: {self.model_loaded}")
         logger.info(f"   Threshold Detection: Enabled (PPS > {self.PPS_THRESHOLD})")
 
@@ -117,19 +159,27 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
-        """Handle new switch connection and install Table-Miss rule"""
+        """Handle new switch connection, install Table-Miss rule, and pre-install core L2 flows"""
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+        dpid = datapath.id
         
-        self.datapaths[datapath.id] = datapath
+        self.datapaths[dpid] = datapath
         
         # Priority 0: Table-miss flow entry (send unhandled packets to controller)
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions, idle_timeout=0)
         
-        logger.info(f"✅ Switch {datapath.id} connected")
+        # Pre-install exact L2 flow entries for instant 0ms routing
+        if dpid in self.mac_to_port:
+            for mac, port in self.mac_to_port[dpid].items():
+                m = parser.OFPMatch(eth_dst=mac)
+                a = [parser.OFPActionOutput(port)]
+                self.add_flow(datapath, 10, m, a, idle_timeout=0)
+                
+        logger.info(f"✅ Switch {dpid} connected & L2 flow rules installed")
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -241,7 +291,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Container-Safe L2 Learning and Anomaly Inspection"""
+        """PacketIn handler for unhandled traffic and DDoS inspection"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -258,24 +308,10 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         src = eth.src
         dpid = datapath.id
         
-        # Learn source MAC on port
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][src] = in_port
-        
-        # Determine output port
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-            
+        # Forward packet via pre-populated MAC directory or flood
+        out_port = self.mac_to_port.get(dpid, {}).get(dst, ofproto.OFPP_FLOOD)
         actions = [parser.OFPActionOutput(out_port)]
         
-        # Install flow rule for known destination MAC
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(eth_dst=dst)
-            self.add_flow(datapath, 1, match, actions, idle_timeout=300)
-            
-        # ALWAYS send raw payload in PacketOut with OFP_NO_BUFFER to eliminate OVS buffer drops
         out = parser.OFPPacketOut(
             datapath=datapath,
             buffer_id=ofproto.OFP_NO_BUFFER,
