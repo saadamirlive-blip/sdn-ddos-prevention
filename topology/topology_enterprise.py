@@ -5,7 +5,7 @@ Enterprise Network Topology
 
 from mininet.topo import Topo
 from mininet.net import Mininet
-from mininet.node import RemoteController, OVSSwitch, Host
+from mininet.node import RemoteController, OVSSwitch, Switch, Host
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 import time
@@ -13,6 +13,27 @@ import sys
 import socket
 import subprocess
 import re
+
+class NonBlockingOVSSwitch(OVSSwitch):
+    """Custom OVS Switch that attaches ports and configures OpenFlow 1.3 non-blockingly"""
+    def vsctl(self, *args, **kwargs):
+        cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
+        return self.cmd(*cmd)
+
+    def start(self, controllers):
+        """Instant non-blocking switch startup"""
+        # Call base Switch.start to attach all veth interfaces to the bridge
+        Switch.start(self, controllers)
+        
+        # Configure OpenFlow 1.3 and RemoteController with --no-wait
+        self.cmd(f'ovs-vsctl --no-wait set bridge {self.name} protocols=OpenFlow13')
+        if controllers:
+            c = controllers[0]
+            port = getattr(c, 'port', 6653)
+            self.cmd(f'ovs-vsctl --no-wait set-controller {self.name} tcp:127.0.0.1:{port}')
+
+    def connected(self):
+        return True
 
 def clean_leftover_network():
     """Ensure Open vSwitch daemon is active and remove stale bridges"""
@@ -24,7 +45,7 @@ def clean_leftover_network():
 
     for br in ['s0', 's1', 's2', 's3']:
         try:
-            subprocess.run(['ovs-vsctl', '--if-exists', 'del-br', br], 
+            subprocess.run(['ovs-vsctl', '--no-wait', '--if-exists', 'del-br', br], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
@@ -46,12 +67,12 @@ class EnterpriseTopo(Topo):
     
     def build(self):
         # Core Switch
-        s0 = self.addSwitch('s0', cls=OVSSwitch, protocols='OpenFlow13')
+        s0 = self.addSwitch('s0', cls=NonBlockingOVSSwitch)
         
         # Edge Switches
-        s1 = self.addSwitch('s1', cls=OVSSwitch, protocols='OpenFlow13')
-        s2 = self.addSwitch('s2', cls=OVSSwitch, protocols='OpenFlow13')
-        s3 = self.addSwitch('s3', cls=OVSSwitch, protocols='OpenFlow13')
+        s1 = self.addSwitch('s1', cls=NonBlockingOVSSwitch)
+        s2 = self.addSwitch('s2', cls=NonBlockingOVSSwitch)
+        s3 = self.addSwitch('s3', cls=NonBlockingOVSSwitch)
         
         # Edge S1 Hosts (h1-h5) - Business units (10.0.0.1 - 10.0.0.5)
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
@@ -132,23 +153,15 @@ def run_enterprise_simulation():
     target_port = get_controller_port()
     print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
     
-    # Standard Mininet startup with RemoteController
+    # Non-blocking Mininet topology startup with NonBlockingOVSSwitch
     net = Mininet(topo=topo, 
                   controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port),
-                  switch=OVSSwitch,
+                  switch=NonBlockingOVSSwitch,
                   waitConnected=False)
     
     # Start network
     net.start()
     
-    # Force OpenFlow 1.3 and controller binding on detected port
-    for s in ['s0', 's1', 's2', 's3']:
-        subprocess.run(['ovs-vsctl', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    # Wait 2 seconds for switches to establish OpenFlow 1.3 session with Ryu
-    time.sleep(2)
-
     # Show topology information
     print("\n" + "-"*70)
     print("TOPOLOGY INFORMATION")
