@@ -143,6 +143,10 @@ def run_enterprise_simulation():
     # Start network
     net.start()
     
+    # Populate static ARP entries for 100% instant zero-loss resolution
+    print("Configuring static ARP entries on all hosts...")
+    net.staticArp()
+    
     # Force OpenFlow 1.3 and controller binding on all switches
     for s in ['s0', 's1', 's2', 's3']:
         subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

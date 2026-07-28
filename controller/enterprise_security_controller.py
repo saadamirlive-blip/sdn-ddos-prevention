@@ -1,6 +1,6 @@
 """
 Enterprise SDN Security Controller
-Implements Enterprise ARP Proxy, L2 Forwarding, ML Detection, and Automated Containment
+Implements Container-Safe OpenFlow 1.3 L2 Learning, ML Detection, and Automated Containment
 """
 
 from ryu.base import app_manager
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class EnterpriseSecurityController(app_manager.RyuApp):
     """
     Enterprise Security Controller for OpenFlow 1.3
-    Features: Enterprise ARP Proxy, Container-Safe L2 Forwarding, DDoS Detection, Automated Containment
+    Features: Container-Safe L2 Forwarding, DDoS Detection, Automated Containment
     """
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
@@ -34,11 +34,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Datapath management and MAC learning tables
         self.datapaths = {}
         self.mac_to_port = {}
-        
-        # Enterprise Static IP-to-MAC Directory for 100% Instant ARP Resolution
-        self.ip_to_mac = {
-            f"10.0.0.{i}": f"00:00:00:00:00:{i:02x}" for i in range(1, 14)
-        }
         
         # Flow statistics
         self.flow_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
@@ -67,7 +62,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Initialize background monitoring
         self.monitor_thread = hub.spawn(self._monitor)
         
-        logger.info("✅ Enterprise Security Controller Initialized (ARP Proxy + ML Security)")
+        logger.info("✅ Enterprise Security Controller Initialized")
         logger.info(f"   ML Model Loaded: {self.model_loaded}")
         logger.info(f"   Threshold Detection: Enabled (PPS > {self.PPS_THRESHOLD})")
 
@@ -246,7 +241,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Enterprise SDN PacketIn Handler with OpenFlow Spec-Compliant Proxy ARP"""
+        """Container-Safe L2 Learning and Anomaly Inspection"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -263,41 +258,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         src = eth.src
         dpid = datapath.id
         
-        # Handle ARP Requests with OpenFlow Spec-Compliant OFPP_IN_PORT Action
-        arp_pkt = pkt.get_protocol(arp.arp)
-        if arp_pkt and arp_pkt.opcode == arp.ARP_REQUEST:
-            target_ip = arp_pkt.dst_ip
-            src_ip = arp_pkt.src_ip
-            target_mac = self.ip_to_mac.get(target_ip)
-            
-            if target_mac:
-                reply_pkt = packet.Packet()
-                reply_pkt.add_protocol(ethernet.ethernet(
-                    ethertype=ether_types.ETH_TYPE_ARP,
-                    dst=src,
-                    src=target_mac
-                ))
-                reply_pkt.add_protocol(arp.arp(
-                    opcode=arp.ARP_REPLY,
-                    src_mac=target_mac,
-                    src_ip=target_ip,
-                    dst_mac=src,
-                    dst_ip=src_ip
-                ))
-                reply_pkt.serialize()
-                
-                # Use OFPP_IN_PORT action to output directly back out of the ingress port
-                actions = [parser.OFPActionOutput(ofproto.OFPP_IN_PORT)]
-                out = parser.OFPPacketOut(
-                    datapath=datapath,
-                    buffer_id=ofproto.OFP_NO_BUFFER,
-                    in_port=in_port,
-                    actions=actions,
-                    data=reply_pkt.data
-                )
-                datapath.send_msg(out)
-                return
-
         # Learn source MAC on port
         self.mac_to_port.setdefault(dpid, {})
         self.mac_to_port[dpid][src] = in_port
