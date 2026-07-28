@@ -14,26 +14,17 @@ import socket
 import subprocess
 import re
 
-class FastOVSSwitch(OVSSwitch):
-    """Custom OVS Switch that uses --no-wait and --timeout=2 to prevent container freezes"""
-    def vsctl(self, *args, **kwargs):
-        cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
-        return self.cmd(*cmd)
-
-    def connected(self):
-        return True
-
 def clean_leftover_network():
     """Ensure Open vSwitch daemon is active and remove stale bridges"""
     try:
-        subprocess.run(['/etc/init.d/openvswitch-switch', 'start'], 
+        subprocess.run(['/etc/init.d/openvswitch-switch', 'restart'], 
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
     for br in ['s0', 's1', 's2', 's3']:
         try:
-            subprocess.run(['ovs-vsctl', '--no-wait', '--if-exists', 'del-br', br], 
+            subprocess.run(['ovs-vsctl', '--if-exists', 'del-br', br], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
@@ -55,12 +46,12 @@ class EnterpriseTopo(Topo):
     
     def build(self):
         # Core Switch
-        s0 = self.addSwitch('s0', cls=FastOVSSwitch)
+        s0 = self.addSwitch('s0', cls=OVSSwitch, protocols='OpenFlow13')
         
         # Edge Switches
-        s1 = self.addSwitch('s1', cls=FastOVSSwitch)
-        s2 = self.addSwitch('s2', cls=FastOVSSwitch)
-        s3 = self.addSwitch('s3', cls=FastOVSSwitch)
+        s1 = self.addSwitch('s1', cls=OVSSwitch, protocols='OpenFlow13')
+        s2 = self.addSwitch('s2', cls=OVSSwitch, protocols='OpenFlow13')
+        s3 = self.addSwitch('s3', cls=OVSSwitch, protocols='OpenFlow13')
         
         # Edge S1 Hosts (h1-h5) - Business units (10.0.0.1 - 10.0.0.5)
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
@@ -141,24 +132,23 @@ def run_enterprise_simulation():
     target_port = get_controller_port()
     print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
     
-    # Non-blocking Mininet topology startup with FastOVSSwitch
+    # Standard Mininet startup with RemoteController
     net = Mininet(topo=topo, 
                   controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port),
-                  switch=FastOVSSwitch,
+                  switch=OVSSwitch,
                   waitConnected=False)
     
     # Start network
     net.start()
     
-    # Populate static ARP entries for instant zero-loss resolution
-    print("Configuring static ARP entries on all hosts...")
-    net.staticArp()
-    
     # Force OpenFlow 1.3 and controller binding on detected port
     for s in ['s0', 's1', 's2', 's3']:
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
+    # Wait 2 seconds for switches to establish OpenFlow 1.3 session with Ryu
+    time.sleep(2)
+
     # Show topology information
     print("\n" + "-"*70)
     print("TOPOLOGY INFORMATION")
@@ -188,8 +178,8 @@ def run_enterprise_simulation():
     print("="*70)
     print("\nAvailable Commands:")
     print("  1. Test Connectivity:")
-    print("     h1 ping 10.0.0.11       # Ping WEB Server (h11)")
-    print("     h2 ping 10.0.0.11       # Ping WEB Server (h11)")
+    print("     h1 ping -c 3 10.0.0.11   # Ping WEB Server (h11)")
+    print("     h2 ping -c 3 10.0.0.11   # Ping WEB Server (h11)")
     print("  ")
     print("  2. Generate Normal Traffic:")
     print("     h11 iperf -s &          # Start iperf server on WEB")
