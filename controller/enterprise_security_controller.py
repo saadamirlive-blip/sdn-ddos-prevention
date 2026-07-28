@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class EnterpriseSecurityController(app_manager.RyuApp):
     """
     Enterprise Security Controller for OpenFlow 1.3
-    Features: Dynamic L2 MAC Learning, Container-Safe PacketOut, ML Detection, Automated Containment
+    Features: Dynamic L2 MAC Learning, Container-Safe Forwarding, ML Detection, Automated Containment
     """
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
@@ -271,9 +271,9 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             
         actions = [parser.OFPActionOutput(out_port)]
         
-        # Install flow rule for known destination MAC to avoid PacketIn next time
+        # Install flow rule for known destination MAC
         if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+            match = parser.OFPMatch(eth_dst=dst)
             self.add_flow(datapath, 1, match, actions, idle_timeout=300)
             
         # ALWAYS send raw payload in PacketOut with OFP_NO_BUFFER to eliminate OVS buffer drops
