@@ -58,12 +58,12 @@ class EnterpriseTopo(Topo):
     
     def build(self):
         # Core Switch
-        s0 = self.addSwitch('s0', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
+        s0 = self.addSwitch('s0')
         
         # Edge Switches
-        s1 = self.addSwitch('s1', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
-        s2 = self.addSwitch('s2', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
-        s3 = self.addSwitch('s3', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
+        s1 = self.addSwitch('s1')
+        s2 = self.addSwitch('s2')
+        s3 = self.addSwitch('s3')
         
         # Edge S1 Hosts (h1-h5) - Business units
         h1 = self.addHost('h1', ip='10.0.1.1/24', mac='00:00:00:00:00:01')
@@ -101,7 +101,7 @@ class EnterpriseTopo(Topo):
             'h13': 'ATTACKER'
         }
         
-        # Connect Core Switch to Edge Switches (Standard fast veth links)
+        # Connect Core Switch to Edge Switches
         self.addLink(s0, s1)
         self.addLink(s0, s2)
         self.addLink(s0, s3)
@@ -150,8 +150,13 @@ def run_enterprise_simulation():
                   switch=OVSSwitch,
                   waitConnected=False)
     
-    # Start network
+    # Start network instantly
     net.start()
+    
+    # Configure OpenFlow 1.3 protocol and controller link on all switches post-start
+    for s in ['s0', 's1', 's2', 's3']:
+        subprocess.run(['ovs-vsctl', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     # Show topology information
     print("\n" + "-"*70)
