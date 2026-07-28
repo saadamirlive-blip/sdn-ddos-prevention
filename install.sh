@@ -3,6 +3,10 @@
 #  SDN Security Lab – One-Click Environment Setup Script
 # =============================================================================
 
+# Ensure script runs from project root directory regardless of current working directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+cd "$SCRIPT_DIR" || cd /workspaces/sdn-ddos-prevention || true
+
 VENV="/opt/sdn_venv"
 LOG="/tmp/sdn_install.log"
 
@@ -79,17 +83,20 @@ for root, dirs, files in os.walk(ryu_dir):
 print("Patch complete!")
 PY
 
-# Install patched Ryu
+# Install patched Ryu package
 cd /tmp/ryu-4.34
 pip install . --no-build-isolation --no-deps -q || python setup.py install -q || true
 
-# Verify ryu-manager binary is built
-if command -v ryu-manager &>/dev/null; then
-    echo "✅ ryu-manager installed successfully at $(which ryu-manager)" | tee -a "$LOG"
-else
-    echo "⚠️ ryu-manager binary fallback..." | tee -a "$LOG"
-    pip install ryu --no-build-isolation -q || true
-fi
+# Explicitly create ryu-manager binary wrapper to guarantee availability
+cat << 'EOF' > /opt/sdn_venv/bin/ryu-manager
+#!/opt/sdn_venv/bin/python3
+import sys
+from ryu.cmd.manager import main
+if __name__ == '__main__':
+    sys.exit(main())
+EOF
+chmod +x /opt/sdn_venv/bin/ryu-manager
+echo "✅ ryu-manager binary created at /opt/sdn_venv/bin/ryu-manager" | tee -a "$LOG"
 
 # 5. Install Remaining Python Requirements
 echo "Installing ML & analysis packages..." | tee -a "$LOG"
@@ -97,11 +104,11 @@ pip install scikit-learn pandas numpy matplotlib seaborn joblib networkx autopep
 
 # 6. Pre-train ML Model
 echo "Pre-training ML model..." | tee -a "$LOG"
-cd /workspaces/sdn-ddos-prevention/controller 2>/dev/null || cd /workspaces/sdn_security_project/controller 2>/dev/null || cd controller 2>/dev/null || true
+cd "$SCRIPT_DIR/controller" 2>/dev/null || cd /workspaces/sdn-ddos-prevention/controller 2>/dev/null || true
 python3 train_model.py || true
 
 # 7. Add default alias for venv activation
 grep -qF "sdn_venv" ~/.bashrc || echo "source /opt/sdn_venv/bin/activate 2>/dev/null || true" >> ~/.bashrc
 
 echo "=== Setup Completed Successfully ✅ ===" | tee -a "$LOG"
-echo "To start controller: source /opt/sdn_venv/bin/activate && cd controller && ryu-manager --verbose enterprise_security_controller.py"
+echo "To start controller: cd /workspaces/sdn-ddos-prevention/controller && ryu-manager --verbose enterprise_security_controller.py"
