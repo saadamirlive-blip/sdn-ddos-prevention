@@ -88,13 +88,13 @@ class EnterpriseTopo(Topo):
     """Enterprise Network Topology - 4 OpenFlow Switches, 13 Hosts"""
     
     def build(self):
-        # Core Switch
-        s0 = self.addSwitch('s0', cls=NonBlockingOVSSwitch)
+        # Core Switch (Explicit DPID 1)
+        s0 = self.addSwitch('s0', cls=NonBlockingOVSSwitch, dpid='1')
         
-        # Edge Switches
-        s1 = self.addSwitch('s1', cls=NonBlockingOVSSwitch)
-        s2 = self.addSwitch('s2', cls=NonBlockingOVSSwitch)
-        s3 = self.addSwitch('s3', cls=NonBlockingOVSSwitch)
+        # Edge Switches (Explicit DPIDs 2, 3, 4)
+        s1 = self.addSwitch('s1', cls=NonBlockingOVSSwitch, dpid='2')
+        s2 = self.addSwitch('s2', cls=NonBlockingOVSSwitch, dpid='3')
+        s3 = self.addSwitch('s3', cls=NonBlockingOVSSwitch, dpid='4')
         
         # Edge S1 Hosts (h1-h5) - Business units (10.0.0.1 - 10.0.0.5)
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
@@ -193,10 +193,10 @@ def run_enterprise_simulation():
     print("TOPOLOGY INFORMATION")
     print("-"*70)
     print("\nSwitches:")
-    print("  s0 - Core Switch")
-    print("  s1 - Edge S1 - Business")
-    print("  s2 - Edge S2 - Business")
-    print("  s3 - Edge S3 - Servers")
+    print("  s0 - Core Switch (DPID 1)")
+    print("  s1 - Edge S1 - Business (DPID 2)")
+    print("  s2 - Edge S2 - Business (DPID 3)")
+    print("  s3 - Edge S3 - Servers (DPID 4)")
     
     print("\nHosts:")
     for host in net.hosts:
