@@ -159,8 +159,9 @@ def run_enterprise_simulation():
     # Start network instantly
     net.start()
     
-    # Configure OpenFlow 1.3 protocol and controller link on all switches post-start
+    # Configure standalone fail mode, OpenFlow 1.3 protocol, and controller link on all switches
     for s in ['s0', 's1', 's2', 's3']:
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-fail-mode', s, 'standalone'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
