@@ -246,7 +246,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Enterprise SDN PacketIn Handler with Proxy ARP & L2 Forwarding"""
+        """Enterprise SDN PacketIn Handler with OpenFlow Spec-Compliant Proxy ARP"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -263,7 +263,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         src = eth.src
         dpid = datapath.id
         
-        # Handle ARP Requests with Controller ARP Proxy for 100% Instant Resolution
+        # Handle ARP Requests with OpenFlow Spec-Compliant OFPP_IN_PORT Action
         arp_pkt = pkt.get_protocol(arp.arp)
         if arp_pkt and arp_pkt.opcode == arp.ARP_REQUEST:
             target_ip = arp_pkt.dst_ip
@@ -286,11 +286,12 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                 ))
                 reply_pkt.serialize()
                 
-                actions = [parser.OFPActionOutput(in_port)]
+                # Use OFPP_IN_PORT action to output directly back out of the ingress port
+                actions = [parser.OFPActionOutput(ofproto.OFPP_IN_PORT)]
                 out = parser.OFPPacketOut(
                     datapath=datapath,
                     buffer_id=ofproto.OFP_NO_BUFFER,
-                    in_port=ofproto.OFPP_CONTROLLER,
+                    in_port=in_port,
                     actions=actions,
                     data=reply_pkt.data
                 )
