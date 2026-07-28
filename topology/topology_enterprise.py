@@ -159,11 +159,11 @@ def run_enterprise_simulation():
     # Start network instantly
     net.start()
     
-    # Configure standalone fail mode, OpenFlow 1.3 protocol, and controller link on all switches
+    # Configure standalone fail mode, OpenFlow 1.3 protocol, and controller links (6653 and 6633) on all switches
     for s in ['s0', 's1', 's2', 's3']:
         subprocess.run(['ovs-vsctl', '--no-wait', 'set-fail-mode', s, 'standalone'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, 'tcp:127.0.0.1:6653', 'tcp:127.0.0.1:6633'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     # Show topology information
     print("\n" + "-"*70)
@@ -190,7 +190,7 @@ def run_enterprise_simulation():
     print("\n" + "-"*70)
     print("CONTROLLER INFORMATION")
     print("-"*70)
-    print(f"  Ryu Controller: 127.0.0.1:{target_port}")
+    print(f"  Ryu Controller: 127.0.0.1 (Ports 6653 / 6633)")
     print("  OpenFlow Version: 1.3")
     print("  Security Modules: ML Detection, Dynamic Segmentation, Automated Containment")
     

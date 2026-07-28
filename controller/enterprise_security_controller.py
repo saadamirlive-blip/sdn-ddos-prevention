@@ -8,7 +8,7 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4, tcp, udp, icmp, arp
+from ryu.lib.packet import packet, ethernet, ipv4, tcp, udp, icmp, arp, ether_types
 from ryu.lib import hub
 import time
 import pickle
@@ -222,21 +222,32 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         self._add_flow(datapath, 200, match, actions, idle_timeout=600)
         logger.info(f"🚫 {src_ip} blocked on switch {dpid}")
 
-    def _add_flow(self, datapath, priority, match, actions, idle_timeout=0):
+    def _add_flow(self, datapath, priority, match, actions, buffer_id=None, idle_timeout=0):
         """Install flow rule on switch"""
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
         
-        mod = parser.OFPFlowMod(
-            datapath=datapath,
-            priority=priority,
-            match=match,
-            instructions=inst,
-            idle_timeout=idle_timeout,
-            hard_timeout=0
-        )
+        if buffer_id and buffer_id != ofproto.OFP_NO_BUFFER:
+            mod = parser.OFPFlowMod(
+                datapath=datapath,
+                buffer_id=buffer_id,
+                priority=priority,
+                match=match,
+                instructions=inst,
+                idle_timeout=idle_timeout,
+                hard_timeout=0
+            )
+        else:
+            mod = parser.OFPFlowMod(
+                datapath=datapath,
+                priority=priority,
+                match=match,
+                instructions=inst,
+                idle_timeout=idle_timeout,
+                hard_timeout=0
+            )
         datapath.send_msg(mod)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -257,19 +268,17 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets with OpenFlow 1.3 match parsing and anomaly detection"""
+        """Handle incoming packets with standard OpenFlow 1.3 L2 learning and anomaly detection"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        
-        # Correct OpenFlow 1.3 match access for in_port
         in_port = msg.match['in_port']
         
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
         
-        if not eth:
+        if not eth or eth.ethertype == ether_types.ETH_TYPE_LLDP:
             return
             
         dst = eth.dst
@@ -289,14 +298,18 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Install flow rule to avoid packet_in storms when destination port is known
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
-            self._add_flow(datapath, 10, match, actions, idle_timeout=300)
+            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                self._add_flow(datapath, 1, match, actions, buffer_id=msg.buffer_id)
+                return
+            else:
+                self._add_flow(datapath, 1, match, actions)
+                
+        data = None
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+            data = msg.data
             
-        # Always send raw packet payload in PacketOut to prevent OVS buffer drops
-        out = parser.OFPPacketOut(datapath=datapath,
-                                  buffer_id=ofproto.OFP_NO_BUFFER,
-                                  in_port=in_port,
-                                  actions=actions,
-                                  data=msg.data)
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                  in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
         
         # Check IP packets for DDoS attacks
