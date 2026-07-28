@@ -222,32 +222,21 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         self._add_flow(datapath, 200, match, actions, idle_timeout=600)
         logger.info(f"🚫 {src_ip} blocked on switch {dpid}")
 
-    def _add_flow(self, datapath, priority, match, actions, buffer_id=None, idle_timeout=0):
+    def _add_flow(self, datapath, priority, match, actions, idle_timeout=0):
         """Install flow rule on switch"""
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
         
-        if buffer_id and buffer_id != ofproto.OFP_NO_BUFFER:
-            mod = parser.OFPFlowMod(
-                datapath=datapath,
-                buffer_id=buffer_id,
-                priority=priority,
-                match=match,
-                instructions=inst,
-                idle_timeout=idle_timeout,
-                hard_timeout=0
-            )
-        else:
-            mod = parser.OFPFlowMod(
-                datapath=datapath,
-                priority=priority,
-                match=match,
-                instructions=inst,
-                idle_timeout=idle_timeout,
-                hard_timeout=0
-            )
+        mod = parser.OFPFlowMod(
+            datapath=datapath,
+            priority=priority,
+            match=match,
+            instructions=inst,
+            idle_timeout=idle_timeout,
+            hard_timeout=0
+        )
         datapath.send_msg(mod)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -268,7 +257,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets with standard OpenFlow 1.3 L2 learning and anomaly detection"""
+        """Handle incoming packets with explicit FlowMod and immediate PacketOut delivery"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -298,12 +287,9 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Install flow rule to avoid packet_in storms when destination port is known
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self._add_flow(datapath, 1, match, actions, buffer_id=msg.buffer_id)
-                return
-            else:
-                self._add_flow(datapath, 1, match, actions)
+            self._add_flow(datapath, 1, match, actions, idle_timeout=300)
                 
+        # ALWAYS send PacketOut explicitly to ensure 100% immediate packet delivery
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
