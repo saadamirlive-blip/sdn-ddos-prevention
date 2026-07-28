@@ -1,6 +1,6 @@
 """
 Enterprise SDN Security Controller
-Implements Dynamic OpenFlow 1.3 L2 MAC Learning, ML Detection, and Automated Containment
+Implements Cross-Switch Topology-Aware L2 Forwarding, ML Detection, and Automated Containment
 """
 
 from ryu.base import app_manager
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class EnterpriseSecurityController(app_manager.RyuApp):
     """
     Enterprise Security Controller for OpenFlow 1.3
-    Features: Dynamic L2 MAC Learning, Container-Safe Forwarding, ML Detection, Automated Containment
+    Features: Cross-Switch Topology-Aware L2 Forwarding, Container-Safe PacketOut, ML Detection, Automated Containment
     """
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
@@ -34,6 +34,16 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Datapath management and dynamic MAC tables
         self.datapaths = {}
         self.mac_to_port = {}
+        
+        # Topology interconnect map
+        # DPID 1 = s0 (Core), DPID 2 = s1 (Edge 1), DPID 3 = s2 (Edge 2), DPID 4 = s3 (Edge 3)
+        # s0 port 1 -> s1, port 2 -> s2, port 3 -> s3
+        # s1 port 1 -> s0, s2 port 1 -> s0, s3 port 1 -> s0
+        self.edge_switch_map = {
+            2: [1, 2, 3, 4, 5],    # s1 handles host IDs 1..5 on local ports 2..6
+            3: [6, 7, 8, 9, 10],   # s2 handles host IDs 6..10 on local ports 2..6
+            4: [11, 12, 13]        # s3 handles host IDs 11..13 on local ports 2..4
+        }
         
         # Flow statistics
         self.flow_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
@@ -62,7 +72,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Initialize background monitoring
         self.monitor_thread = hub.spawn(self._monitor)
         
-        logger.info("✅ Enterprise Security Controller Initialized (Dynamic L2 + ML Security)")
+        logger.info("✅ Enterprise Security Controller Initialized (Topology-Aware L2 + ML Security)")
         logger.info(f"   ML Model Loaded: {self.model_loaded}")
         logger.info(f"   Threshold Detection: Enabled (PPS > {self.PPS_THRESHOLD})")
 
@@ -242,7 +252,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Dynamic OpenFlow 1.3 L2 MAC Learning & Container-Safe Forwarding"""
+        """Topology-Aware Cross-Switch L2 Learning & Container-Safe Forwarding"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -259,10 +269,31 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         src = eth.src
         dpid = datapath.id
         
-        # Learn MAC address for source port dynamically
+        # Learn MAC address for source port dynamically on current datapath
         self.mac_to_port.setdefault(dpid, {})
         self.mac_to_port[dpid][src] = in_port
         
+        # Cross-switch MAC propagation: If packet is learned on local edge switch host port
+        if dpid in self.edge_switch_map and in_port > 1:
+            # On Core switch s0 (DPID 1): MAC is reachable via port corresponding to edge switch (s1=1, s2=2, s3=3)
+            core_port = dpid - 1
+            self.mac_to_port.setdefault(1, {})[src] = core_port
+            if 1 in self.datapaths:
+                dp_core = self.datapaths[1]
+                match_core = dp_core.ofproto_parser.OFPMatch(eth_dst=src)
+                actions_core = [dp_core.ofproto_parser.OFPActionOutput(core_port)]
+                self.add_flow(dp_core, 1, match_core, actions_core, idle_timeout=300)
+                
+            # On all other edge switches: MAC is reachable via port 1 (link to s0 Core)
+            for edge_id in [2, 3, 4]:
+                if edge_id != dpid:
+                    self.mac_to_port.setdefault(edge_id, {})[src] = 1
+                    if edge_id in self.datapaths:
+                        dp_edge = self.datapaths[edge_id]
+                        match_edge = dp_edge.ofproto_parser.OFPMatch(eth_dst=src)
+                        actions_edge = [dp_edge.ofproto_parser.OFPActionOutput(1)]
+                        self.add_flow(dp_edge, 1, match_edge, actions_edge, idle_timeout=300)
+
         # Determine output port
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
@@ -271,7 +302,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             
         actions = [parser.OFPActionOutput(out_port)]
         
-        # Install flow rule for known destination MAC
+        # Install flow rule for known destination MAC on current datapath
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(eth_dst=dst)
             self.add_flow(datapath, 1, match, actions, idle_timeout=300)
