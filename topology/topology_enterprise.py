@@ -10,6 +10,7 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 import time
 import sys
+import os
 import socket
 import subprocess
 import re
@@ -69,8 +70,8 @@ def clean_leftover_network():
     except Exception:
         pass
 
-def get_controller_port():
-    """Detect if Ryu is listening on port 6653 or 6633"""
+def ensure_ryu_running():
+    """Check if Ryu is listening; if not, spawn it in background automatically"""
     for port in [6653, 6633]:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -79,7 +80,20 @@ def get_controller_port():
                     return port
         except Exception:
             pass
-    return 6653  # Default OpenFlow 1.3 port
+            
+    print("🚀 Auto-starting Ryu Security Controller in background...")
+    try:
+        controller_script = os.path.abspath(os.path.join(os.path.dirname(__file__), '../controller/enterprise_security_controller.py'))
+        venv_ryu = '/opt/sdn_venv/bin/ryu-manager'
+        ryu_cmd = venv_ryu if os.path.exists(venv_ryu) else 'ryu-manager'
+        
+        subprocess.Popen([ryu_cmd, controller_script],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+    except Exception as e:
+        print(f"Warning starting controller: {e}")
+        
+    return 6653
 
 class EnterpriseTopo(Topo):
     """Enterprise Network Topology - 4 OpenFlow Switches, 13 Hosts"""
@@ -163,18 +177,18 @@ def run_enterprise_simulation():
     print("\nCleaning leftover interfaces...")
     clean_leftover_network()
     
+    # Auto-detect or auto-start Ryu Controller
+    target_port = ensure_ryu_running()
+    print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
+    
     print("\nStarting network topology...")
     
     # Create topology
     topo = EnterpriseTopo()
     
-    # Auto-detect active controller port (6653 or 6633)
-    target_port = get_controller_port()
-    print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
-    
-    # Non-blocking Mininet topology startup with NonBlockingOVSSwitch
+    # Non-blocking Mininet topology startup with RemoteController and checkListening=False
     net = Mininet(topo=topo, 
-                  controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port),
+                  controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port, checkListening=False),
                   switch=NonBlockingOVSSwitch,
                   waitConnected=False)
     
