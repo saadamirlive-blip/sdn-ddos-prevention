@@ -36,7 +36,13 @@ class NonBlockingOVSSwitch(OVSSwitch):
         return True
 
 def clean_leftover_network():
-    """Ensure Open vSwitch daemon is active and remove stale bridges"""
+    """Run mn -c and delete all stale interfaces and Open vSwitch bridges"""
+    try:
+        # Run mininet cleanup to wipe stale veth pairs and RTNETLINK entries
+        subprocess.run(['mn', '-c'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
     try:
         subprocess.run(['/etc/init.d/openvswitch-switch', 'restart'], 
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -49,6 +55,15 @@ def clean_leftover_network():
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
+
+    try:
+        res = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=2)
+        ifnames = re.findall(r'\b([sh]\d+-eth\d+)\b', res.stdout)
+        for ifname in set(ifnames):
+            subprocess.run(['ip', 'link', 'delete', ifname], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
+    except Exception:
+        pass
 
 def get_controller_port():
     """Detect if Ryu is listening on port 6653 or 6633"""
