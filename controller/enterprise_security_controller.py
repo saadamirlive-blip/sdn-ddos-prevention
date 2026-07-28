@@ -251,7 +251,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets with standard OpenFlow 1.3 L2 learning and anomaly detection"""
+        """Handle incoming packets with destination-based OpenFlow 1.3 forwarding and anomaly detection"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -278,9 +278,9 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             
         actions = [parser.OFPActionOutput(out_port)]
         
-        # Install flow rule to avoid packet_in storms when destination port is known
+        # Install flow rule matching destination MAC for universal packet forwarding
         if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+            match = parser.OFPMatch(eth_dst=dst)
             self._add_flow(datapath, 1, match, actions, idle_timeout=300)
                 
         # Send PacketOut explicitly to ensure immediate packet delivery
