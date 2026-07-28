@@ -5,7 +5,7 @@ Enterprise Network Topology
 
 from mininet.topo import Topo
 from mininet.net import Mininet
-from mininet.node import RemoteController, OVSSwitch, Switch, Host
+from mininet.node import RemoteController, OVSSwitch, Host
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 import time
@@ -16,21 +16,22 @@ import re
 
 class NonBlockingOVSSwitch(OVSSwitch):
     """Custom OVS Switch that attaches ports and configures OpenFlow 1.3 non-blockingly"""
-    def vsctl(self, *args, **kwargs):
-        cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
-        return self.cmd(*cmd)
-
     def start(self, controllers):
         """Instant non-blocking switch startup"""
-        # Call base Switch.start to attach all veth interfaces to the bridge
-        Switch.start(self, controllers)
+        intfs = [intf.name for intf in self.intfList() if intf.name != 'lo']
         
+        # Create bridge and add interfaces
+        self.cmd('ovs-vsctl --no-wait --if-exists del-br', self.name)
+        self.cmd('ovs-vsctl --no-wait add-br', self.name)
+        for intf in intfs:
+            self.cmd('ovs-vsctl --no-wait add-port', self.name, intf)
+            
         # Configure OpenFlow 1.3 and RemoteController with --no-wait
-        self.cmd(f'ovs-vsctl --no-wait set bridge {self.name} protocols=OpenFlow13')
+        self.cmd('ovs-vsctl --no-wait set bridge', self.name, 'protocols=OpenFlow13')
         if controllers:
             c = controllers[0]
             port = getattr(c, 'port', 6653)
-            self.cmd(f'ovs-vsctl --no-wait set-controller {self.name} tcp:127.0.0.1:{port}')
+            self.cmd('ovs-vsctl --no-wait set-controller', self.name, f'tcp:127.0.0.1:{port}')
 
     def connected(self):
         return True
@@ -38,7 +39,6 @@ class NonBlockingOVSSwitch(OVSSwitch):
 def clean_leftover_network():
     """Run mn -c and delete all stale interfaces and Open vSwitch bridges"""
     try:
-        # Run mininet cleanup to wipe stale veth pairs and RTNETLINK entries
         subprocess.run(['mn', '-c'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
