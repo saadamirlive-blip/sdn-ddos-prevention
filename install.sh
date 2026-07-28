@@ -42,7 +42,7 @@ source "$VENV/bin/activate" || true
 
 # 4. Install Base Tools & Ryu Dependencies
 echo "Installing base Python tools & Ryu dependencies..." | tee -a "$LOG"
-pip install --upgrade pip wheel setuptools pbr "eventlet==0.30.2" netaddr msgpack oslo.config routes tinyrpc webob ovs paramiko -q || true
+pip install --upgrade pip wheel setuptools pbr "eventlet>=0.35.0" netaddr msgpack oslo.config routes tinyrpc webob ovs paramiko -q || true
 
 echo "Downloading and patching Ryu for Python 3.12 compatibility..." | tee -a "$LOG"
 rm -rf /tmp/ryu*
