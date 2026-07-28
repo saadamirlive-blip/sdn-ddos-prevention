@@ -71,24 +71,24 @@ class EnterpriseTopo(Topo):
         s2 = self.addSwitch('s2', cls=FastOVSSwitch)
         s3 = self.addSwitch('s3', cls=FastOVSSwitch)
         
-        # Edge S1 Hosts (h1-h5) - Business units
-        h1 = self.addHost('h1', ip='10.0.1.1/24', mac='00:00:00:00:00:01')
-        h2 = self.addHost('h2', ip='10.0.1.2/24', mac='00:00:00:00:00:02')
-        h3 = self.addHost('h3', ip='10.0.1.3/24', mac='00:00:00:00:00:03')
-        h4 = self.addHost('h4', ip='10.0.1.4/24', mac='00:00:00:00:00:04')
-        h5 = self.addHost('h5', ip='10.0.1.5/24', mac='00:00:00:00:00:05')
+        # Edge S1 Hosts (h1-h5) - Business units (10.0.1.x/16)
+        h1 = self.addHost('h1', ip='10.0.1.1/16', mac='00:00:00:00:00:01')
+        h2 = self.addHost('h2', ip='10.0.1.2/16', mac='00:00:00:00:00:02')
+        h3 = self.addHost('h3', ip='10.0.1.3/16', mac='00:00:00:00:00:03')
+        h4 = self.addHost('h4', ip='10.0.1.4/16', mac='00:00:00:00:00:04')
+        h5 = self.addHost('h5', ip='10.0.1.5/16', mac='00:00:00:00:00:05')
         
-        # Edge S2 Hosts (h6-h10) - Additional business units
-        h6 = self.addHost('h6', ip='10.0.2.1/24', mac='00:00:00:00:00:06')
-        h7 = self.addHost('h7', ip='10.0.2.2/24', mac='00:00:00:00:00:07')
-        h8 = self.addHost('h8', ip='10.0.2.3/24', mac='00:00:00:00:00:08')
-        h9 = self.addHost('h9', ip='10.0.2.4/24', mac='00:00:00:00:00:09')
-        h10 = self.addHost('h10', ip='10.0.2.5/24', mac='00:00:00:00:00:10')
+        # Edge S2 Hosts (h6-h10) - Additional business units (10.0.2.x/16)
+        h6 = self.addHost('h6', ip='10.0.2.1/16', mac='00:00:00:00:00:06')
+        h7 = self.addHost('h7', ip='10.0.2.2/16', mac='00:00:00:00:00:07')
+        h8 = self.addHost('h8', ip='10.0.2.3/16', mac='00:00:00:00:00:08')
+        h9 = self.addHost('h9', ip='10.0.2.4/16', mac='00:00:00:00:00:09')
+        h10 = self.addHost('h10', ip='10.0.2.5/16', mac='00:00:00:00:00:10')
         
-        # Edge S3 Hosts (h11-h13) - Servers and attacker
-        h11 = self.addHost('h11', ip='10.0.3.1/24', mac='00:00:00:00:00:11')
-        h12 = self.addHost('h12', ip='10.0.3.2/24', mac='00:00:00:00:00:12')
-        h13 = self.addHost('h13', ip='10.0.3.3/24', mac='00:00:00:00:00:13')
+        # Edge S3 Hosts (h11-h13) - Servers and attacker (10.0.3.x/16)
+        h11 = self.addHost('h11', ip='10.0.3.1/16', mac='00:00:00:00:00:11')
+        h12 = self.addHost('h12', ip='10.0.3.2/16', mac='00:00:00:00:00:12')
+        h13 = self.addHost('h13', ip='10.0.3.3/16', mac='00:00:00:00:00:13')
         
         # Host labels
         self.host_labels = {
@@ -180,15 +180,10 @@ def run_enterprise_simulation():
         ip = host.IP()
         print(f"  {host.name} ({label}) - {ip}")
     
-    # Configure hosts with proper routes
+    # Configure default routes via default interface
     for host in net.hosts:
-        host.cmd('route add default gw 10.0.0.1')
-    
-    # Test connectivity
-    print("\n" + "-"*70)
-    print("Testing connectivity...")
-    print("-"*70)
-    net.pingAll()
+        intf_name = host.defaultIntf().name
+        host.cmd(f'ip route add default dev {intf_name} 2>/dev/null || true')
     
     # Show controller info
     print("\n" + "-"*70)
@@ -203,13 +198,12 @@ def run_enterprise_simulation():
     print("="*70)
     print("\nAvailable Commands:")
     print("  1. Test Connectivity:")
-    print("     h1 ping h11")
-    print("     h2 ping h11")
-    print("     h3 ping h11")
+    print("     h1 ping 10.0.3.1        # Ping WEB Server")
+    print("     h2 ping 10.0.3.1        # Ping WEB Server")
     print("  ")
     print("  2. Generate Normal Traffic:")
-    print("     iperf -s on server (h11)")
-    print("     iperf -c 10.0.3.1 on client (h1)")
+    print("     h11 iperf -s &          # Start iperf server on WEB")
+    print("     h1 iperf -c 10.0.3.1    # Generate client traffic")
     print("  ")
     print("  3. Launch Attacks (from h13 - Attacker):")
     print("     h13 hping3 -S --flood -p 80 10.0.3.1    # SYN Flood")
@@ -218,15 +212,7 @@ def run_enterprise_simulation():
     print("  ")
     print("  4. Monitor Flow Rules:")
     print("     sh ovs-ofctl -O OpenFlow13 dump-flows s1")
-    print("     sh ovs-ofctl -O OpenFlow13 dump-flows s2")
     print("     sh ovs-ofctl -O OpenFlow13 dump-flows s3")
-    print("  ")
-    print("  5. Monitor Metrics:")
-    print("     sh ovs-ofctl -O OpenFlow13 dump-meters s1")
-    print("     sh ovs-ofctl -O OpenFlow13 dump-groups s1")
-    print("  ")
-    print("  6. Check Controller Logs:")
-    print("     (Check terminal running Ryu)")
     print("\nType 'exit' or press Ctrl+D to end simulation")
     print("="*70)
     
