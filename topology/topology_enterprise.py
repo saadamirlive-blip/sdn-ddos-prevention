@@ -14,6 +14,24 @@ import socket
 import subprocess
 import re
 
+class FastOVSSwitch(OVSSwitch):
+    """OVS Switch that sets controller with --no-wait and bypasses Mininet blocking loops"""
+    def __init__(self, name, **params):
+        params['protocols'] = 'OpenFlow13'
+        super(FastOVSSwitch, self).__init__(name, **params)
+
+    def vsctl(self, *args, **kwargs):
+        cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
+        return self.cmd(*cmd)
+
+    def start(self, controllers):
+        """Instant non-blocking switch startup"""
+        self.cmd(f'ovs-vsctl --no-wait set bridge {self.name} protocols=OpenFlow13')
+        self.cmd(f'ovs-vsctl --no-wait set-controller {self.name} tcp:127.0.0.1:6653')
+
+    def connected(self):
+        return True
+
 def clean_leftover_network():
     """Fast non-blocking removal of stale OVS bridges & restart OVS service"""
     try:
@@ -43,12 +61,12 @@ class EnterpriseTopo(Topo):
     
     def build(self):
         # Core Switch
-        s0 = self.addSwitch('s0', protocols='OpenFlow13')
+        s0 = self.addSwitch('s0', cls=FastOVSSwitch)
         
         # Edge Switches
-        s1 = self.addSwitch('s1', protocols='OpenFlow13')
-        s2 = self.addSwitch('s2', protocols='OpenFlow13')
-        s3 = self.addSwitch('s3', protocols='OpenFlow13')
+        s1 = self.addSwitch('s1', cls=FastOVSSwitch)
+        s2 = self.addSwitch('s2', cls=FastOVSSwitch)
+        s3 = self.addSwitch('s3', cls=FastOVSSwitch)
         
         # Edge S1 Hosts (h1-h5) - Business units (10.0.0.1 - 10.0.0.5)
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
@@ -125,10 +143,10 @@ def run_enterprise_simulation():
     # Create topology
     topo = EnterpriseTopo()
     
-    # Standard Mininet initialization with RemoteController on port 6653 (waitConnected=False)
+    # Instant non-blocking Mininet topology startup
     net = Mininet(topo=topo, 
                   controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
-                  switch=OVSSwitch,
+                  switch=FastOVSSwitch,
                   waitConnected=False)
     
     # Start network
