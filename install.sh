@@ -75,10 +75,10 @@ for root, dirs, files in os.walk(ryu_dir):
             new_content = re.sub(r'collections\.(MutableMapping|Mapping|Sequence|Set|MutableSet|Callable)', r'collections.abc.\1', new_content)
             # Fix inspect.getargspec removed in Python 3.11+
             new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
-            # Fix eventlet.wsgi ALREADY_HANDLED import error in eventlet 0.35+
+            # Fix eventlet.wsgi ALREADY_HANDLED import error in eventlet 0.35+ with correct indentation
             new_content = new_content.replace(
-                'from eventlet.wsgi import ALREADY_HANDLED',
-                'try:\n    from eventlet.wsgi import ALREADY_HANDLED\nexcept ImportError:\n    try:\n        from eventlet.wsgi import _ALREADY_HANDLED as ALREADY_HANDLED\n    except ImportError:\n        ALREADY_HANDLED = object()'
+                '    from eventlet.wsgi import ALREADY_HANDLED',
+                '    try:\n        from eventlet.wsgi import ALREADY_HANDLED\n    except Exception:\n        ALREADY_HANDLED = object()'
             )
             
             if new_content != content:
