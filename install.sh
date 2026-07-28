@@ -52,6 +52,13 @@ import os, re
 ryu_dir = '/tmp/ryu-4.34'
 print(f"Patching Ryu files in {ryu_dir} for Python 3.12...")
 
+# 1. Neutralize ryu/hooks.py to bypass broken setuptools easy_install hooks
+hooks_path = os.path.join(ryu_dir, 'ryu', 'hooks.py')
+if os.path.exists(hooks_path):
+    with open(hooks_path, 'w', encoding='utf-8') as f:
+        f.write("def setup_hook():\n    pass\ndef save_orig():\n    pass\ndef restore_orig():\n    pass\n")
+
+# 2. Patch all .py files in ryu codebase
 for root, dirs, files in os.walk(ryu_dir):
     for file in files:
         if file.endswith('.py'):
@@ -60,12 +67,10 @@ for root, dirs, files in os.walk(ryu_dir):
                 content = f.read()
             
             new_content = content
-            # 1. Fix collections.MutableMapping & friends removed in Python 3.10+
+            # Fix collections.MutableMapping & friends removed in Python 3.10+
             new_content = re.sub(r'collections\.(MutableMapping|Mapping|Sequence|Set|MutableSet|Callable)', r'collections.abc.\1', new_content)
-            # 2. Fix inspect.getargspec removed in Python 3.11+
+            # Fix inspect.getargspec removed in Python 3.11+
             new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
-            # 3. Fix easy_install.get_script_args removed in setuptools 65+
-            new_content = new_content.replace('easy_install.get_script_args', 'getattr(easy_install, "get_script_args", lambda *a, **k: [])')
             
             if new_content != content:
                 with open(filepath, 'w', encoding='utf-8') as f:
@@ -74,9 +79,17 @@ for root, dirs, files in os.walk(ryu_dir):
 print("Patch complete!")
 PY
 
-# Install patched Ryu without build isolation (bypasses pkgutil.ImpImporter error)
+# Install patched Ryu
 cd /tmp/ryu-4.34
 pip install . --no-build-isolation --no-deps -q || python setup.py install -q || true
+
+# Verify ryu-manager binary is built
+if command -v ryu-manager &>/dev/null; then
+    echo "✅ ryu-manager installed successfully at $(which ryu-manager)" | tee -a "$LOG"
+else
+    echo "⚠️ ryu-manager binary fallback..." | tee -a "$LOG"
+    pip install ryu --no-build-isolation -q || true
+fi
 
 # 5. Install Remaining Python Requirements
 echo "Installing ML & analysis packages..." | tee -a "$LOG"
