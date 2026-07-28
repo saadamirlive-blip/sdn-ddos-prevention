@@ -12,15 +12,25 @@ import time
 import sys
 import socket
 import subprocess
+import re
 
 def clean_leftover_network():
-    """Fast non-blocking removal of stale OVS bridges & interfaces"""
+    """Fast non-blocking removal of stale OVS bridges & kernel veth interfaces"""
     for br in ['s0', 's1', 's2', 's3']:
         try:
             subprocess.run(['ovs-vsctl', '--timeout=1', '--if-exists', 'del-br', br], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
         except Exception:
             pass
+            
+    try:
+        res = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=2)
+        ifnames = re.findall(r'\b([sh]\d+-eth\d+)\b', res.stdout)
+        for ifname in set(ifnames):
+            subprocess.run(['ip', 'link', 'delete', ifname], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
+    except Exception:
+        pass
 
 def get_controller_port():
     """Detect if Ryu is listening on port 6653 or 6633"""
