@@ -40,9 +40,9 @@ sudo python3 -m venv "$VENV" || true
 sudo chown -R $(whoami) "$VENV" 2>/dev/null || true
 source "$VENV/bin/activate" || true
 
-# 4. Install Base Tools & Patch Ryu for Python 3.12
-echo "Installing base Python tools..." | tee -a "$LOG"
-pip install --upgrade pip wheel setuptools pbr "eventlet==0.30.2" -q || true
+# 4. Install Base Tools & Ryu Dependencies
+echo "Installing base Python tools & Ryu dependencies..." | tee -a "$LOG"
+pip install --upgrade pip wheel setuptools pbr "eventlet==0.30.2" netaddr msgpack oslo.config routes tinyrpc webob ovs paramiko -q || true
 
 echo "Downloading and patching Ryu for Python 3.12 compatibility..." | tee -a "$LOG"
 rm -rf /tmp/ryu*
