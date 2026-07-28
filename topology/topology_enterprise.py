@@ -15,19 +15,10 @@ import subprocess
 import re
 
 class FastOVSSwitch(OVSSwitch):
-    """OVS Switch that sets controller with --no-wait and bypasses Mininet blocking loops"""
-    def __init__(self, name, **params):
-        params['protocols'] = 'OpenFlow13'
-        super(FastOVSSwitch, self).__init__(name, **params)
-
+    """Custom OVS Switch that uses --no-wait and --timeout=2 to prevent container freezes"""
     def vsctl(self, *args, **kwargs):
         cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
         return self.cmd(*cmd)
-
-    def start(self, controllers):
-        """Instant non-blocking switch startup"""
-        self.cmd(f'ovs-vsctl --no-wait set bridge {self.name} protocols=OpenFlow13')
-        self.cmd(f'ovs-vsctl --no-wait set-controller {self.name} tcp:127.0.0.1:6653')
 
     def connected(self):
         return True
@@ -143,7 +134,7 @@ def run_enterprise_simulation():
     # Create topology
     topo = EnterpriseTopo()
     
-    # Instant non-blocking Mininet topology startup
+    # Non-blocking Mininet topology startup with FastOVSSwitch
     net = Mininet(topo=topo, 
                   controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
                   switch=FastOVSSwitch,
@@ -151,6 +142,11 @@ def run_enterprise_simulation():
     
     # Start network
     net.start()
+    
+    # Force OpenFlow 1.3 and controller binding on all switches
+    for s in ['s0', 's1', 's2', 's3']:
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, 'tcp:127.0.0.1:6653'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     # Show topology information
     print("\n" + "-"*70)
