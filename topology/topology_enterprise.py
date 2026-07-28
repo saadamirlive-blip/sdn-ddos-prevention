@@ -24,28 +24,19 @@ class FastOVSSwitch(OVSSwitch):
         return True
 
 def clean_leftover_network():
-    """Fast non-blocking removal of stale OVS bridges & restart OVS service"""
+    """Ensure Open vSwitch daemon is active and remove stale bridges"""
     try:
-        subprocess.run(['service', 'openvswitch-switch', 'restart'], 
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+        subprocess.run(['/etc/init.d/openvswitch-switch', 'start'], 
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
     for br in ['s0', 's1', 's2', 's3']:
         try:
-            subprocess.run(['ovs-vsctl', '--no-wait', '--timeout=1', '--if-exists', 'del-br', br], 
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
+            subprocess.run(['ovs-vsctl', '--no-wait', '--if-exists', 'del-br', br], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
-            
-    try:
-        res = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=2)
-        ifnames = re.findall(r'\b([sh]\d+-eth\d+)\b', res.stdout)
-        for ifname in set(ifnames):
-            subprocess.run(['ip', 'link', 'delete', ifname], 
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
-    except Exception:
-        pass
 
 def get_controller_port():
     """Detect if Ryu is listening on port 6653 or 6633"""
@@ -148,7 +139,7 @@ def run_enterprise_simulation():
     
     # Auto-detect active controller port (6653 or 6633)
     target_port = get_controller_port()
-    print(f"Detected active Ryu Controller port: {target_port}")
+    print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
     
     # Non-blocking Mininet topology startup with FastOVSSwitch
     net = Mininet(topo=topo, 
@@ -159,7 +150,7 @@ def run_enterprise_simulation():
     # Start network
     net.start()
     
-    # Populate static ARP entries for 100% instant zero-loss resolution
+    # Populate static ARP entries for instant zero-loss resolution
     print("Configuring static ARP entries on all hosts...")
     net.staticArp()
     
