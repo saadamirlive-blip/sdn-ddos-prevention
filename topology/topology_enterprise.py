@@ -47,6 +47,18 @@ def clean_leftover_network():
     except Exception:
         pass
 
+def get_controller_port():
+    """Detect if Ryu is listening on port 6653 or 6633"""
+    for port in [6653, 6633]:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex(('127.0.0.1', port)) == 0:
+                    return port
+        except Exception:
+            pass
+    return 6653  # Default OpenFlow 1.3 port
+
 class EnterpriseTopo(Topo):
     """Enterprise Network Topology - 4 OpenFlow Switches, 13 Hosts"""
     
@@ -134,9 +146,13 @@ def run_enterprise_simulation():
     # Create topology
     topo = EnterpriseTopo()
     
+    # Auto-detect active controller port (6653 or 6633)
+    target_port = get_controller_port()
+    print(f"Detected active Ryu Controller port: {target_port}")
+    
     # Non-blocking Mininet topology startup with FastOVSSwitch
     net = Mininet(topo=topo, 
-                  controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
+                  controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port),
                   switch=FastOVSSwitch,
                   waitConnected=False)
     
@@ -147,10 +163,10 @@ def run_enterprise_simulation():
     print("Configuring static ARP entries on all hosts...")
     net.staticArp()
     
-    # Force OpenFlow 1.3 and controller binding on all switches
+    # Force OpenFlow 1.3 and controller binding on detected port
     for s in ['s0', 's1', 's2', 's3']:
         subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, 'tcp:127.0.0.1:6653'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     # Show topology information
     print("\n" + "-"*70)
@@ -172,7 +188,7 @@ def run_enterprise_simulation():
     print("\n" + "-"*70)
     print("CONTROLLER INFORMATION")
     print("-"*70)
-    print("  Ryu Controller: 127.0.0.1:6653")
+    print(f"  Ryu Controller: 127.0.0.1:{target_port}")
     print("  OpenFlow Version: 1.3")
     print("  Security Modules: ML Detection, Dynamic Segmentation, Automated Containment")
     
