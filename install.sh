@@ -51,53 +51,118 @@ tar -xzf /tmp/ryu-4.34.tar.gz -C /tmp
 
 # Comprehensive Python 3.12 compatibility patch for Ryu codebase
 python3 - <<'PY'
-import os, re
+import os, re, site
 
-ryu_dir = '/tmp/ryu-4.34'
-print(f"Patching Ryu files in {ryu_dir} for Python 3.12...")
+def patch_ryu_dir(target_dir):
+    if not os.path.exists(target_dir):
+        return
+    print(f"Patching Ryu files in {target_dir}...")
+    
+    # 1. Neutralize ryu/hooks.py to bypass broken setuptools easy_install hooks
+    hooks_path = os.path.join(target_dir, 'hooks.py')
+    if os.path.exists(hooks_path):
+        with open(hooks_path, 'w', encoding='utf-8') as f:
+            f.write("def setup_hook(*args, **kwargs):\n    pass\ndef save_orig(*args, **kwargs):\n    pass\ndef restore_orig(*args, **kwargs):\n    pass\n")
 
-# 1. Neutralize ryu/hooks.py to bypass broken setuptools easy_install hooks
-hooks_path = os.path.join(ryu_dir, 'ryu', 'hooks.py')
-if os.path.exists(hooks_path):
-    with open(hooks_path, 'w', encoding='utf-8') as f:
-        f.write("def setup_hook(*args, **kwargs):\n    pass\ndef save_orig(*args, **kwargs):\n    pass\ndef restore_orig(*args, **kwargs):\n    pass\n")
+    # 2. Patch all .py files in target directory
+    for root, dirs, files in os.walk(target_dir):
+        for file in files:
+            if file.endswith('.py'):
+                filepath = os.path.join(root, file)
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                new_content = content
+                # Fix collections.MutableMapping & friends removed in Python 3.10+
+                new_content = re.sub(r'collections\.(MutableMapping|Mapping|Sequence|Set|MutableSet|Callable)', r'collections.abc.\1', new_content)
+                # Fix inspect.getargspec removed in Python 3.11+
+                new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
+                
+                # Clean line-by-line fix for eventlet.wsgi ALREADY_HANDLED import in wsgi.py
+                if 'from eventlet.wsgi import ALREADY_HANDLED' in new_content:
+                    lines = new_content.splitlines()
+                    out_lines = []
+                    skip_next = 0
+                    for line in lines:
+                        if 'from eventlet.wsgi import ALREADY_HANDLED' in line:
+                            out_lines.append('    try:')
+                            out_lines.append('        from eventlet.wsgi import ALREADY_HANDLED')
+                            out_lines.append('    except Exception:')
+                            out_lines.append('        ALREADY_HANDLED = object()')
+                        elif 'except Exception:' in line and 'ALREADY_HANDLED' in line:
+                            continue
+                        elif 'ALREADY_HANDLED = object()' in line:
+                            continue
+                        elif 'try:' in line and len(out_lines) > 0 and 'class _AlreadyHandledResponse' in out_lines[-1]:
+                            continue
+                        else:
+                            out_lines.append(line)
+                    new_content = '\n'.join(out_lines) + '\n'
+                
+                if new_content != content:
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(new_content)
 
-# 2. Patch all .py files in ryu codebase
-for root, dirs, files in os.walk(ryu_dir):
-    for file in files:
-        if file.endswith('.py'):
-            filepath = os.path.join(root, file)
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            new_content = content
-            # Fix collections.MutableMapping & friends removed in Python 3.10+
-            new_content = re.sub(r'collections\.(MutableMapping|Mapping|Sequence|Set|MutableSet|Callable)', r'collections.abc.\1', new_content)
-            # Fix inspect.getargspec removed in Python 3.11+
-            new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
-            # Fix eventlet.wsgi ALREADY_HANDLED import error in eventlet 0.35+ with correct indentation
-            new_content = new_content.replace(
-                '    from eventlet.wsgi import ALREADY_HANDLED',
-                '    try:\n        from eventlet.wsgi import ALREADY_HANDLED\n    except Exception:\n        ALREADY_HANDLED = object()'
-            )
-            
-            if new_content != content:
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(new_content)
+patch_ryu_dir('/tmp/ryu-4.34/ryu')
 
-print("Patch complete!")
 PY
 
 # Install patched Ryu package into site-packages
 cd /tmp/ryu-4.34
 pip install . --no-build-isolation --no-deps -q || python setup.py install -q || true
 
-# Direct site-packages deployment guarantee
+# Direct site-packages deployment & patch guarantee
 SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
+rm -rf "$SITE_PACKAGES/ryu"
 if [ -d "/tmp/ryu-4.34/ryu" ]; then
     cp -r /tmp/ryu-4.34/ryu "$SITE_PACKAGES/"
     echo "✅ ryu module copied directly to $SITE_PACKAGES/ryu" | tee -a "$LOG"
 fi
+
+# Run patch directly on installed site-packages/ryu to guarantee clean state
+python3 - <<'PY'
+import os, re, site
+
+site_pkg = site.getsitepackages()[0]
+ryu_dir = os.path.join(site_pkg, 'ryu')
+
+if os.path.exists(ryu_dir):
+    for root, dirs, files in os.walk(ryu_dir):
+        for file in files:
+            if file.endswith('.py'):
+                filepath = os.path.join(root, file)
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                new_content = content
+                new_content = re.sub(r'collections\.(MutableMapping|Mapping|Sequence|Set|MutableSet|Callable)', r'collections.abc.\1', new_content)
+                new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
+                
+                if 'from eventlet.wsgi import ALREADY_HANDLED' in new_content:
+                    lines = new_content.splitlines()
+                    out_lines = []
+                    for line in lines:
+                        if 'from eventlet.wsgi import ALREADY_HANDLED' in line:
+                            out_lines.append('    try:')
+                            out_lines.append('        from eventlet.wsgi import ALREADY_HANDLED')
+                            out_lines.append('    except Exception:')
+                            out_lines.append('        ALREADY_HANDLED = object()')
+                        elif 'except Exception:' in line and 'ALREADY_HANDLED' in line:
+                            continue
+                        elif 'ALREADY_HANDLED = object()' in line:
+                            continue
+                        elif 'try:' in line and len(out_lines) > 0 and 'class _AlreadyHandledResponse' in out_lines[-1]:
+                            continue
+                        else:
+                            out_lines.append(line)
+                    new_content = '\n'.join(out_lines) + '\n'
+                
+                if new_content != content:
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(new_content)
+
+print("Site-packages Ryu patch verified!")
+PY
 
 # Explicitly create ryu-manager binary wrapper to guarantee availability
 cat << 'EOF' > /opt/sdn_venv/bin/ryu-manager
