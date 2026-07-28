@@ -8,7 +8,7 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4, tcp, udp, icmp
+from ryu.lib.packet import packet, ethernet, ipv4, tcp, udp, icmp, arp
 from ryu.lib import hub
 import time
 import pickle
@@ -100,14 +100,13 @@ class EnterpriseSecurityController(app_manager.RyuApp):
     def _monitor(self):
         """Traffic Monitoring Module - Periodic polling"""
         while True:
-            for dp in self.datapaths.values():
+            for dp in list(self.datapaths.values()):
                 self._request_stats(dp)
             hub.sleep(3)  # 3-second polling interval
 
     def _collect_stats(self):
         """Background statistics collection"""
         while True:
-            # Calculate real-time metrics
             total_pps = 0
             total_bps = 0
             
@@ -116,7 +115,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                     total_pps += values.get('pps', 0)
                     total_bps += values.get('bps', 0)
             
-            # Log if high traffic
             if total_pps > self.PPS_THRESHOLD:
                 logger.debug(f"High traffic: {total_pps:.0f} PPS, {total_bps/1024/1024:.1f} MB/s")
             
@@ -130,7 +128,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             req = parser.OFPFlowStatsRequest(datapath)
             datapath.send_msg(req)
         except Exception as e:
-            logger.error(f"Error requesting stats from {datapath.id}: {e}")
+            logger.debug(f"Error requesting stats from {datapath.id}: {e}")
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -145,15 +143,11 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                 ip_dst = match.get('ipv4_dst')
                 
                 if ip_src and ip_dst and ip_src != '0.0.0.0':
-                    # Calculate metrics
-                    pps = stat.packet_count / 3  # Over 3-second window
+                    pps = stat.packet_count / 3
                     bps = stat.byte_count / 3
                     duration = stat.duration_sec
-                    
-                    # Get protocol from match
                     proto = match.get('ip_proto', 0)
                     
-                    # Store statistics
                     flow_key = f"{ip_src}->{ip_dst}"
                     self.flow_stats[dpid][flow_key] = {
                         'pps': pps,
@@ -165,7 +159,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                         'timestamp': time.time()
                     }
                     
-                    # Keep history for ML
                     self.flow_history[flow_key].append({
                         'pps': pps,
                         'bps': bps,
@@ -174,7 +167,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                     if len(self.flow_history[flow_key]) > 10:
                         self.flow_history[flow_key].pop(0)
                     
-                    # Run detection if not already blocked
                     if ip_src not in self.attack_sources:
                         self._detect_anomaly(dpid, ip_src, ip_dst, pps, bps, duration, proto)
                     
@@ -185,51 +177,38 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         """Anomaly Detection Module"""
         start_time = time.time()
         
-        # Check if source is known attacker
         if src_ip in self.attack_sources:
             return
             
-        # Threshold-based detection
         is_anomaly = False
         anomaly_reason = ""
         
-        # Rule 1: High PPS
         if pps > self.PPS_THRESHOLD:
             is_anomaly = True
             anomaly_reason = f"High PPS: {pps:.0f}"
             
-        # Rule 2: High BPS
         if bps > self.BPS_THRESHOLD:
             is_anomaly = True
             anomaly_reason = f"High BPS: {bps/1024/1024:.1f} MB/s"
             
-        # Rule 3: SYN Flood (high TCP SYN packets)
-        if proto == 6:  # TCP
-            # Check SYN ratio (would need packet inspection)
-            pass
-            
-        # Rule 4: Multiple protocols (mixed attack)
-        # Check if same source uses multiple protocols
         src_protos = set()
         for key, stats in self.flow_stats[dpid].items():
             if key.startswith(src_ip):
                 src_protos.add(stats.get('proto', 0))
         
-        if len(src_protos) >= 3:  # Using TCP, UDP, ICMP
+        if len(src_protos) >= 3:
             is_anomaly = True
             anomaly_reason = "Multi-protocol attack"
         
-        # ML-based detection (if model available)
         if is_anomaly and self.model_loaded:
-            # Prepare features
             features = np.array([[
-                pps / 1000,  # Normalize
+                pps / 1000,
                 bps / 10000000,
-                min(duration / 60, 1.0),  # Normalize duration
+                min(duration / 60, 1.0),
                 len(self.flow_history.get(f"{src_ip}->{dst_ip}", [])) / 10,
-                1 if proto == 6 else 0,  # TCP flag
-                1 if proto == 17 else 0,  # UDP flag
-                1 if proto == 1 else 0   # ICMP flag
+                1 if proto == 6 else 0,
+                1 if proto == 17 else 0,
+                1 if proto == 1 else 0
             ]])
             
             try:
@@ -242,14 +221,12 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                     anomaly_reason = f"ML detection (conf: {confidence:.2f})"
                     logger.warning(f"🤖 ML Confirms Attack: {src_ip} -> {dst_ip}")
                 else:
-                    # ML says it's normal - potential false positive
                     self.false_containments += 1
                     is_anomaly = False
                     
             except Exception as e:
                 logger.error(f"ML prediction error: {e}")
         
-        # Trigger containment if anomaly detected
         if is_anomaly:
             detection_time = time.time() - start_time
             self.detection_times.append(detection_time)
@@ -266,7 +243,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         self.containment_count += 1
         self.is_attack_active = True
         
-        # Calculate attack severity (0-1)
         severity = self._calculate_severity(src_ip)
         self.attack_severity[src_ip] = severity
         
@@ -274,12 +250,10 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         logger.info(f"   Severity: {severity:.2f}")
         logger.info(f"   Reason: {reason}")
         
-        # Select strategy based on severity
         strategy = self._select_strategy(severity)
         self.containment_strategies[src_ip] = strategy
         logger.info(f"   Strategy: {strategy}")
         
-        # Execute containment
         if strategy == 'block':
             self._block_traffic(dpid, src_ip)
         elif strategy == 'quarantine':
@@ -289,21 +263,16 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         elif strategy == 'monitor':
             self._monitor_suspicious(src_ip)
         
-        # Record containment time
         containment_time = time.time() - start_time
         self.containment_times.append(containment_time)
         
-        # Update available services
         self.available_services = self._count_available_services()
-        
-        # Add to attack sources
         self.attack_sources.add(src_ip)
         
         logger.info(f"✅ Containment Complete: {containment_time:.3f}s")
 
     def _calculate_severity(self, src_ip):
         """Calculate attack severity (0-1)"""
-        # Get attack metrics
         pps_values = []
         bps_values = []
         duration_values = []
@@ -318,17 +287,14 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         if not pps_values:
             return 0.5
         
-        # Normalize metrics
         avg_pps = np.mean(pps_values)
         avg_bps = np.mean(bps_values)
         avg_duration = np.mean(duration_values)
         
-        # Score components (0-1)
         pps_score = min(avg_pps / 20000, 1.0)
         bps_score = min(avg_bps / 50000000, 1.0)
         duration_score = min(avg_duration / 60, 1.0)
         
-        # Weighted combination
         severity = (pps_score * 0.4) + (bps_score * 0.3) + (duration_score * 0.3)
         return min(severity, 1.0)
 
@@ -352,13 +318,11 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
-        # Add high priority drop rule
-        match = parser.OFPMatch(ipv4_src=src_ip)
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip)
         actions = []  # Drop
         self._add_flow(datapath, 200, match, actions, idle_timeout=300)
         
-        # Also block response traffic (Ingress)
-        match = parser.OFPMatch(ipv4_dst=src_ip)
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=src_ip)
         actions = []  # Drop
         self._add_flow(datapath, 200, match, actions, idle_timeout=300)
         
@@ -373,20 +337,14 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
-        # Get quarantine port (typically port 3 on edge switches)
-        # In our topology, this redirects to the quarantine host (h13)
-        
-        # Redirect rule - send all traffic to quarantine
-        match = parser.OFPMatch(ipv4_src=src_ip)
-        actions = [parser.OFPActionOutput(3)]  # Quarantine port
-        self._add_flow(datapath, 150, match, actions, idle_timeout=180)
-        
-        # Also redirect response
-        match = parser.OFPMatch(ipv4_dst=src_ip)
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip)
         actions = [parser.OFPActionOutput(3)]
         self._add_flow(datapath, 150, match, actions, idle_timeout=180)
         
-        # Add to quarantine list
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=src_ip)
+        actions = [parser.OFPActionOutput(3)]
+        self._add_flow(datapath, 150, match, actions, idle_timeout=180)
+        
         self.quarantine_hosts.append(src_ip)
         logger.info(f"🔀 {src_ip} redirected to quarantine segment")
 
@@ -399,10 +357,8 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
-        # Create meter for rate limiting
         meter_id = len(self.containment_strategies) + 1
         
-        # Add meter to switch
         meter_mod = parser.OFPMeterMod(
             datapath=datapath,
             command=ofproto.OFPMC_ADD,
@@ -412,8 +368,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         )
         datapath.send_msg(meter_mod)
         
-        # Apply meter to attack traffic
-        match = parser.OFPMatch(ipv4_src=src_ip)
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip)
         actions = [parser.OFPActionMeter(meter_id)]
         self._add_flow(datapath, 100, match, actions, idle_timeout=180)
         
@@ -422,8 +377,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
     def _monitor_suspicious(self, src_ip):
         """Monitor suspicious traffic without immediate action"""
         logger.info(f"🔍 Monitoring suspicious traffic from {src_ip}")
-        # Add monitoring rule (send to controller for inspection)
-        # In real implementation, this would trigger deeper packet inspection
 
     def _add_flow(self, datapath, priority, match, actions, idle_timeout=60):
         """Install flow rule on switch"""
@@ -444,9 +397,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     def _count_available_services(self):
         """Count currently available services/hosts"""
-        # Count hosts that are not under attack
-        available = 0
-        # In simulation, track based on attack sources
         total_hosts = self.total_services
         attack_hosts = len(self.attack_sources)
         return total_hosts - attack_hosts
@@ -458,10 +408,9 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
-        # Store datapath
         self.datapaths[datapath.id] = datapath
         
-        # Default flow rule (send to controller)
+        # Table-miss flow entry (send unhandled packets to controller)
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, 
                                          ofproto.OFPCML_NO_BUFFER)]
@@ -471,54 +420,74 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets"""
+        """Handle incoming ARP and IP packets with L2 learning and forwarding"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+        in_port = msg.in_port
         
-        # Get packet details
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
         
         if not eth:
             return
             
-        # Learn MAC addresses
+        dst = eth.dst
+        src = eth.src
         dpid = datapath.id
+        
         self.mac_to_port.setdefault(dpid, {})
+        self.mac_to_port[dpid][src] = in_port
         
-        # Learn source MAC
-        self.mac_to_port[dpid][eth.src] = msg.in_port
-        
-        # If destination MAC known, forward
-        if eth.dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][eth.dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
+        # Handle ARP Packets
+        arp_pkt = pkt.get_protocol(arp.arp)
+        if arp_pkt:
+            out_port = self.mac_to_port[dpid].get(dst, ofproto.OFPP_FLOOD)
+            actions = [parser.OFPActionOutput(out_port)]
             
-        # Forward packet
+            data = None
+            if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                data = msg.data
+            out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                      in_port=in_port, actions=actions, data=data)
+            datapath.send_msg(out)
+            return
+
+        # Handle IP Packets
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        if ip_pkt:
+            src_ip = ip_pkt.src_ip
+            dst_ip = ip_pkt.dst_ip
+            proto = ip_pkt.proto
+            
+            out_port = self.mac_to_port[dpid].get(dst, ofproto.OFPP_FLOOD)
+            actions = [parser.OFPActionOutput(out_port)]
+            
+            if out_port != ofproto.OFPP_FLOOD:
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+                self._add_flow(datapath, 10, match, actions, idle_timeout=60)
+            
+            data = None
+            if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                data = msg.data
+            out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                      in_port=in_port, actions=actions, data=data)
+            datapath.send_msg(out)
+            
+            # Anomaly check
+            if src_ip not in self.attack_sources:
+                self._detect_anomaly(dpid, src_ip, dst_ip, 10, 1000, 1, proto)
+            return
+
+        # Fallback L2 forwarding
+        out_port = self.mac_to_port[dpid].get(dst, ofproto.OFPP_FLOOD)
         actions = [parser.OFPActionOutput(out_port)]
-        
-        # Install flow to avoid packet_in storm
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(
-                in_port=msg.in_port,
-                eth_dst=eth.dst,
-                eth_src=eth.src
-            )
-            
-            # Add flow with low priority
-            self._add_flow(datapath, 1, match, actions)
-        
-        # Send packet
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=msg.buffer_id,
-            in_port=msg.in_port,
-            actions=actions,
-            data=msg.data
-        )
+        data = None
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+            data = msg.data
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                  in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
     def get_metrics(self):
@@ -526,17 +495,10 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         avg_detection = np.mean(self.detection_times) if self.detection_times else 0
         avg_containment = np.mean(self.containment_times) if self.containment_times else 0
         
-        # Calculate containment rate
         total_incidents = len(self.attack_sources) + (self.containment_count if self.containment_count > 0 else 0)
         containment_rate = (self.containment_count / max(1, total_incidents)) * 100
-        
-        # Calculate false containment rate
         false_rate = (self.false_containments / max(1, self.total_legitimate)) * 100
-        
-        # Calculate availability
         availability = (self.available_services / self.total_services) * 100
-        
-        # Calculate response time (detection + containment)
         avg_response = avg_detection + avg_containment
         
         return {
@@ -551,7 +513,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             'attack_sources': list(self.attack_sources)
         }
 
-# Main execution
 if __name__ == '__main__':
     from ryu.cmd.manager import main
     import sys
