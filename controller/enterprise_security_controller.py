@@ -1,10 +1,9 @@
 """
 Enterprise SDN Security Controller
-Inherits from Ryu SimpleSwitch13 for robust L2 forwarding
-Implements ML Detection, Dynamic Segmentation, and Automated Containment
+Implements Container-Safe OpenFlow 1.3 L2 Learning, ML Detection, and Automated Containment
 """
 
-from ryu.app import simple_switch_13
+from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
@@ -22,18 +21,19 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class EnterpriseSecurityController(simple_switch_13.SimpleSwitch13):
+class EnterpriseSecurityController(app_manager.RyuApp):
     """
-    Enterprise Security Controller extending official Ryu SimpleSwitch13
-    Adds: DDoS Anomaly Detection, ML Verification, Automated Containment
+    Enterprise Security Controller for OpenFlow 1.3
+    Features: Container-Safe L2 Forwarding, DDoS Detection, Automated Containment
     """
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(EnterpriseSecurityController, self).__init__(*args, **kwargs)
         
-        # Datapath management
+        # Datapath management and MAC learning tables
         self.datapaths = {}
+        self.mac_to_port = {}
         
         # Flow statistics
         self.flow_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
@@ -62,7 +62,7 @@ class EnterpriseSecurityController(simple_switch_13.SimpleSwitch13):
         # Initialize background monitoring
         self.monitor_thread = hub.spawn(self._monitor)
         
-        logger.info("✅ Enterprise Security Controller Initialized (SimpleSwitch13 Engine)")
+        logger.info("✅ Enterprise Security Controller Initialized (Container-Safe Engine)")
         logger.info(f"   ML Model Loaded: {self.model_loaded}")
         logger.info(f"   Threshold Detection: Enabled (PPS > {self.PPS_THRESHOLD})")
 
@@ -99,13 +99,37 @@ class EnterpriseSecurityController(simple_switch_13.SimpleSwitch13):
         except Exception:
             pass
 
+    def add_flow(self, datapath, priority, match, actions, idle_timeout=0):
+        """Install flow rule on switch"""
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        mod = parser.OFPFlowMod(
+            datapath=datapath,
+            priority=priority,
+            match=match,
+            instructions=inst,
+            idle_timeout=idle_timeout,
+            hard_timeout=0
+        )
+        datapath.send_msg(mod)
+
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
-        """Register switch datapath and invoke SimpleSwitch13 base handler"""
-        super(EnterpriseSecurityController, self).switch_features_handler(ev)
+        """Handle new switch connection and install Table-Miss rule"""
         datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
         self.datapaths[datapath.id] = datapath
-        logger.info(f"✅ Switch {datapath.id} connected and registered")
+        
+        # Priority 0: Table-miss flow entry (send unhandled packets to controller)
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions, idle_timeout=0)
+        
+        logger.info(f"✅ Switch {datapath.id} connected")
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -217,11 +241,52 @@ class EnterpriseSecurityController(simple_switch_13.SimpleSwitch13):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets for anomaly inspection, then delegate to SimpleSwitch13"""
+        """Container-Safe L2 Learning and Anomaly Inspection"""
         msg = ev.msg
-        pkt = packet.Packet(msg.data)
-        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
         
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
+        
+        if not eth or eth.ethertype == ether_types.ETH_TYPE_LLDP:
+            return
+            
+        dst = eth.dst
+        src = eth.src
+        dpid = datapath.id
+        
+        # Learn source MAC on port
+        self.mac_to_port.setdefault(dpid, {})
+        self.mac_to_port[dpid][src] = in_port
+        
+        # Determine output port
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
+        else:
+            out_port = ofproto.OFPP_FLOOD
+            
+        actions = [parser.OFPActionOutput(out_port)]
+        
+        # Install flow rule for known destination MAC
+        if out_port != ofproto.OFPP_FLOOD:
+            match = parser.OFPMatch(eth_dst=dst)
+            self.add_flow(datapath, 1, match, actions, idle_timeout=300)
+            
+        # ALWAYS send raw payload in PacketOut with OFP_NO_BUFFER to eliminate OVS buffer drops
+        out = parser.OFPPacketOut(
+            datapath=datapath,
+            buffer_id=ofproto.OFP_NO_BUFFER,
+            in_port=in_port,
+            actions=actions,
+            data=msg.data
+        )
+        datapath.send_msg(out)
+        
+        # Inspect IP packets for DDoS anomalies
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt:
             src_ip = ip_pkt.src_ip
             dst_ip = ip_pkt.dst_ip
@@ -236,10 +301,7 @@ class EnterpriseSecurityController(simple_switch_13.SimpleSwitch13):
             real_pps = self.pkt_counts[src_ip]
             
             if src_ip not in self.attack_sources and real_pps > self.PPS_THRESHOLD:
-                self._detect_anomaly(msg.datapath.id, src_ip, dst_ip, real_pps, 5000000, 1, proto)
-                
-        # Pass packet to Ryu SimpleSwitch13 base handler for 100% reliable L2 forwarding
-        super(EnterpriseSecurityController, self)._packet_in_handler(ev)
+                self._detect_anomaly(dpid, src_ip, dst_ip, real_pps, 5000000, 1, proto)
 
 if __name__ == '__main__':
     from ryu.cmd.manager import main
