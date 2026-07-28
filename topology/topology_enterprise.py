@@ -14,6 +14,12 @@ import socket
 import subprocess
 import re
 
+class FastOVSSwitch(OVSSwitch):
+    """Custom OVS Switch that uses --no-wait and --timeout=2 to prevent container freezes"""
+    def vsctl(self, *args, **kwargs):
+        cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
+        return self.cmd(*cmd)
+
 def clean_leftover_network():
     """Fast non-blocking removal of stale OVS bridges & restart OVS service"""
     # 1. Restart Open vSwitch service to ensure daemon is active
@@ -26,7 +32,7 @@ def clean_leftover_network():
     # 2. Delete stale OVS bridges
     for br in ['s0', 's1', 's2', 's3']:
         try:
-            subprocess.run(['ovs-vsctl', '--timeout=1', '--if-exists', 'del-br', br], 
+            subprocess.run(['ovs-vsctl', '--no-wait', '--timeout=1', '--if-exists', 'del-br', br], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
         except Exception:
             pass
@@ -58,12 +64,12 @@ class EnterpriseTopo(Topo):
     
     def build(self):
         # Core Switch
-        s0 = self.addSwitch('s0')
+        s0 = self.addSwitch('s0', cls=FastOVSSwitch)
         
         # Edge Switches
-        s1 = self.addSwitch('s1')
-        s2 = self.addSwitch('s2')
-        s3 = self.addSwitch('s3')
+        s1 = self.addSwitch('s1', cls=FastOVSSwitch)
+        s2 = self.addSwitch('s2', cls=FastOVSSwitch)
+        s3 = self.addSwitch('s3', cls=FastOVSSwitch)
         
         # Edge S1 Hosts (h1-h5) - Business units
         h1 = self.addHost('h1', ip='10.0.1.1/24', mac='00:00:00:00:00:01')
@@ -144,10 +150,10 @@ def run_enterprise_simulation():
     target_port = get_controller_port()
     print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
     
-    # Connect to Ryu controller with waitConnected=False
+    # Connect to Ryu controller using FastOVSSwitch
     net = Mininet(topo=topo, 
                   controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port),
-                  switch=OVSSwitch,
+                  switch=FastOVSSwitch,
                   waitConnected=False)
     
     # Start network instantly
@@ -155,8 +161,8 @@ def run_enterprise_simulation():
     
     # Configure OpenFlow 1.3 protocol and controller link on all switches post-start
     for s in ['s0', 's1', 's2', 's3']:
-        subprocess.run(['ovs-vsctl', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     # Show topology information
     print("\n" + "-"*70)
