@@ -257,12 +257,14 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets with guaranteed payload forwarding and anomaly detection"""
+        """Handle incoming packets with OpenFlow 1.3 match parsing and anomaly detection"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        in_port = msg.in_port
+        
+        # Correct OpenFlow 1.3 match access for in_port
+        in_port = msg.match['in_port']
         
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
