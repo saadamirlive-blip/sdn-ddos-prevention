@@ -15,7 +15,15 @@ import subprocess
 import re
 
 def clean_leftover_network():
-    """Fast non-blocking removal of stale OVS bridges & kernel veth interfaces"""
+    """Fast non-blocking removal of stale OVS bridges & restart OVS service"""
+    # 1. Restart Open vSwitch service to ensure daemon is active
+    try:
+        subprocess.run(['service', 'openvswitch-switch', 'restart'], 
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+    except Exception:
+        pass
+
+    # 2. Delete stale OVS bridges
     for br in ['s0', 's1', 's2', 's3']:
         try:
             subprocess.run(['ovs-vsctl', '--timeout=1', '--if-exists', 'del-br', br], 
@@ -23,6 +31,7 @@ def clean_leftover_network():
         except Exception:
             pass
             
+    # 3. Delete stale kernel veth interfaces
     try:
         res = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=2)
         ifnames = re.findall(r'\b([sh]\d+-eth\d+)\b', res.stdout)
