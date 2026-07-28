@@ -71,24 +71,24 @@ class EnterpriseTopo(Topo):
         s2 = self.addSwitch('s2', cls=FastOVSSwitch)
         s3 = self.addSwitch('s3', cls=FastOVSSwitch)
         
-        # Edge S1 Hosts (h1-h5) - Business units (10.0.1.x/16)
-        h1 = self.addHost('h1', ip='10.0.1.1/16', mac='00:00:00:00:00:01')
-        h2 = self.addHost('h2', ip='10.0.1.2/16', mac='00:00:00:00:00:02')
-        h3 = self.addHost('h3', ip='10.0.1.3/16', mac='00:00:00:00:00:03')
-        h4 = self.addHost('h4', ip='10.0.1.4/16', mac='00:00:00:00:00:04')
-        h5 = self.addHost('h5', ip='10.0.1.5/16', mac='00:00:00:00:00:05')
+        # Edge S1 Hosts (h1-h5) - Business units (10.0.0.1 - 10.0.0.5)
+        h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
+        h2 = self.addHost('h2', ip='10.0.0.2/24', mac='00:00:00:00:00:02')
+        h3 = self.addHost('h3', ip='10.0.0.3/24', mac='00:00:00:00:00:03')
+        h4 = self.addHost('h4', ip='10.0.0.4/24', mac='00:00:00:00:00:04')
+        h5 = self.addHost('h5', ip='10.0.0.5/24', mac='00:00:00:00:00:05')
         
-        # Edge S2 Hosts (h6-h10) - Additional business units (10.0.2.x/16)
-        h6 = self.addHost('h6', ip='10.0.2.1/16', mac='00:00:00:00:00:06')
-        h7 = self.addHost('h7', ip='10.0.2.2/16', mac='00:00:00:00:00:07')
-        h8 = self.addHost('h8', ip='10.0.2.3/16', mac='00:00:00:00:00:08')
-        h9 = self.addHost('h9', ip='10.0.2.4/16', mac='00:00:00:00:00:09')
-        h10 = self.addHost('h10', ip='10.0.2.5/16', mac='00:00:00:00:00:10')
+        # Edge S2 Hosts (h6-h10) - Additional business units (10.0.0.6 - 10.0.0.10)
+        h6 = self.addHost('h6', ip='10.0.0.6/24', mac='00:00:00:00:00:06')
+        h7 = self.addHost('h7', ip='10.0.0.7/24', mac='00:00:00:00:00:07')
+        h8 = self.addHost('h8', ip='10.0.0.8/24', mac='00:00:00:00:00:08')
+        h9 = self.addHost('h9', ip='10.0.0.9/24', mac='00:00:00:00:00:09')
+        h10 = self.addHost('h10', ip='10.0.0.10/24', mac='00:00:00:00:00:10')
         
-        # Edge S3 Hosts (h11-h13) - Servers and attacker (10.0.3.x/16)
-        h11 = self.addHost('h11', ip='10.0.3.1/16', mac='00:00:00:00:00:11')
-        h12 = self.addHost('h12', ip='10.0.3.2/16', mac='00:00:00:00:00:12')
-        h13 = self.addHost('h13', ip='10.0.3.3/16', mac='00:00:00:00:00:13')
+        # Edge S3 Hosts (h11-h13) - Servers and attacker (10.0.0.11 - 10.0.0.13)
+        h11 = self.addHost('h11', ip='10.0.0.11/24', mac='00:00:00:00:00:11')
+        h12 = self.addHost('h12', ip='10.0.0.12/24', mac='00:00:00:00:00:12')
+        h13 = self.addHost('h13', ip='10.0.0.13/24', mac='00:00:00:00:00:13')
         
         # Host labels
         self.host_labels = {
@@ -181,11 +181,6 @@ def run_enterprise_simulation():
         ip = host.IP()
         print(f"  {host.name} ({label}) - {ip}")
     
-    # Configure default routes via default interface
-    for host in net.hosts:
-        intf_name = host.defaultIntf().name
-        host.cmd(f'ip route add default dev {intf_name} 2>/dev/null || true')
-    
     # Show controller info
     print("\n" + "-"*70)
     print("CONTROLLER INFORMATION")
@@ -199,17 +194,17 @@ def run_enterprise_simulation():
     print("="*70)
     print("\nAvailable Commands:")
     print("  1. Test Connectivity:")
-    print("     h1 ping 10.0.3.1        # Ping WEB Server")
-    print("     h2 ping 10.0.3.1        # Ping WEB Server")
+    print("     h1 ping 10.0.0.11       # Ping WEB Server (h11)")
+    print("     h2 ping 10.0.0.11       # Ping WEB Server (h11)")
     print("  ")
     print("  2. Generate Normal Traffic:")
     print("     h11 iperf -s &          # Start iperf server on WEB")
-    print("     h1 iperf -c 10.0.3.1    # Generate client traffic")
+    print("     h1 iperf -c 10.0.0.11   # Generate client traffic")
     print("  ")
     print("  3. Launch Attacks (from h13 - Attacker):")
-    print("     h13 hping3 -S --flood -p 80 10.0.3.1    # SYN Flood")
-    print("     h13 hping3 --udp --flood -p 53 10.0.3.1  # UDP Flood")
-    print("     h13 ping -f 10.0.3.1                     # ICMP Flood")
+    print("     h13 hping3 -S --flood -p 80 10.0.0.11   # SYN Flood")
+    print("     h13 hping3 --udp --flood -p 53 10.0.0.11 # UDP Flood")
+    print("     h13 ping -f 10.0.0.11                   # ICMP Flood")
     print("  ")
     print("  4. Monitor Flow Rules:")
     print("     sh ovs-ofctl -O OpenFlow13 dump-flows s1")
