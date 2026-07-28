@@ -42,27 +42,16 @@ class NonBlockingOVSSwitch(OVSSwitch):
         return True
 
 def clean_leftover_network():
-    """Run mn -c and delete all stale interfaces and Open vSwitch bridges"""
-    try:
-        subprocess.run(['mn', '-c'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
-    try:
-        subprocess.run(['/etc/init.d/openvswitch-switch', 'restart'], 
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
+    """Fast non-blocking interface and bridge cleanup without systemd service hangs"""
     for br in ['s0', 's1', 's2', 's3']:
         try:
-            subprocess.run(['ovs-vsctl', '--no-wait', '--if-exists', 'del-br', br], 
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['ovs-vsctl', '--no-wait', '--timeout=1', '--if-exists', 'del-br', br], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
         except Exception:
             pass
 
     try:
-        res = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=2)
+        res = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=1)
         ifnames = re.findall(r'\b([sh]\d+-eth\d+)\b', res.stdout)
         for ifname in set(ifnames):
             subprocess.run(['ip', 'link', 'delete', ifname], 
