@@ -125,10 +125,11 @@ def run_enterprise_simulation():
     # Create topology
     topo = EnterpriseTopo()
     
-    # Standard Mininet initialization with RemoteController on port 6653
+    # Standard Mininet initialization with RemoteController on port 6653 (non-blocking)
     net = Mininet(topo=topo, 
                   controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
-                  switch=OVSSwitch)
+                  switch=OVSSwitch,
+                  waitConnected=False)
     
     # Start network
     net.start()
