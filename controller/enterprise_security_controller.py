@@ -251,7 +251,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets with destination-based OpenFlow 1.3 forwarding and anomaly detection"""
+        """Handle incoming packets with raw payload delivery to eliminate container buffer drops"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -283,13 +283,12 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             match = parser.OFPMatch(eth_dst=dst)
             self._add_flow(datapath, 1, match, actions, idle_timeout=300)
                 
-        # Send PacketOut explicitly to ensure immediate packet delivery
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-            
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
+        # ALWAYS send raw msg.data payload and OFP_NO_BUFFER to eliminate container OVS buffer expiration
+        out = parser.OFPPacketOut(datapath=datapath,
+                                  buffer_id=ofproto.OFP_NO_BUFFER,
+                                  in_port=in_port,
+                                  actions=actions,
+                                  data=msg.data)
         datapath.send_msg(out)
         
         # Check IP packets for DDoS attacks using real PPS rate calculation
