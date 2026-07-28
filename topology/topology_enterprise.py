@@ -11,6 +11,15 @@ from mininet.log import setLogLevel, info
 import time
 import sys
 import socket
+import os
+
+def clean_leftover_network():
+    """Remove leftover OVS bridges & veth pairs without killing ryu-manager"""
+    os.system("ovs-vsctl --if-exists del-br s0 2>/dev/null")
+    os.system("ovs-vsctl --if-exists del-br s1 2>/dev/null")
+    os.system("ovs-vsctl --if-exists del-br s2 2>/dev/null")
+    os.system("ovs-vsctl --if-exists del-br s3 2>/dev/null")
+    os.system("ip link show | grep -E 's[0-9]+-eth' | awk '{print $2}' | tr -d ':' | xargs -I {} ip link delete {} 2>/dev/null")
 
 def get_controller_port():
     """Detect if Ryu is listening on port 6653 or 6633"""
@@ -103,6 +112,9 @@ def run_enterprise_simulation():
     print("\n" + "="*70)
     print("ENTERPRISE SDN SECURITY SIMULATION")
     print("="*70)
+    print("\nCleaning leftover interfaces...")
+    clean_leftover_network()
+    
     print("\nStarting network topology...")
     
     # Create topology
