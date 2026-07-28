@@ -11,15 +11,16 @@ from mininet.log import setLogLevel, info
 import time
 import sys
 import socket
-import os
+import subprocess
 
 def clean_leftover_network():
-    """Remove leftover OVS bridges & veth pairs without killing ryu-manager"""
-    os.system("ovs-vsctl --if-exists del-br s0 2>/dev/null")
-    os.system("ovs-vsctl --if-exists del-br s1 2>/dev/null")
-    os.system("ovs-vsctl --if-exists del-br s2 2>/dev/null")
-    os.system("ovs-vsctl --if-exists del-br s3 2>/dev/null")
-    os.system("ip link show | grep -E 's[0-9]+-eth' | awk '{print $2}' | tr -d ':' | xargs -I {} ip link delete {} 2>/dev/null")
+    """Fast non-blocking removal of stale OVS bridges & interfaces"""
+    for br in ['s0', 's1', 's2', 's3']:
+        try:
+            subprocess.run(['ovs-vsctl', '--timeout=1', '--if-exists', 'del-br', br], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
+        except Exception:
+            pass
 
 def get_controller_port():
     """Detect if Ryu is listening on port 6653 or 6633"""
