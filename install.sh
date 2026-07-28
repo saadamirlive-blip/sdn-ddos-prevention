@@ -60,7 +60,7 @@ print(f"Patching Ryu files in {ryu_dir} for Python 3.12...")
 hooks_path = os.path.join(ryu_dir, 'ryu', 'hooks.py')
 if os.path.exists(hooks_path):
     with open(hooks_path, 'w', encoding='utf-8') as f:
-        f.write("def setup_hook():\n    pass\ndef save_orig():\n    pass\ndef restore_orig():\n    pass\n")
+        f.write("def setup_hook(*args, **kwargs):\n    pass\ndef save_orig(*args, **kwargs):\n    pass\ndef restore_orig(*args, **kwargs):\n    pass\n")
 
 # 2. Patch all .py files in ryu codebase
 for root, dirs, files in os.walk(ryu_dir):
