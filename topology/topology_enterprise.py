@@ -147,6 +147,12 @@ def run_enterprise_simulation():
     # Start network
     net.start()
     
+    # Enable STP and bind controller targets to ensure unblocked inter-switch forwarding
+    for s in ['s0', 's1', 's2', 's3']:
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'stp_enable=true'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-fail-mode', s, 'secure'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, 'tcp:127.0.0.1:6653'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
     # Show topology information
     print("\n" + "-"*70)
     print("TOPOLOGY INFORMATION")
