@@ -57,13 +57,13 @@ class EnterpriseTopo(Topo):
     """Enterprise Network Topology - 4 OpenFlow Switches, 13 Hosts"""
     
     def build(self):
-        # Core Switch
-        s0 = self.addSwitch('s0', cls=OVSSwitch, protocols='OpenFlow13')
+        # Core Switch with standalone failMode to prevent startup freeze
+        s0 = self.addSwitch('s0', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
         
         # Edge Switches
-        s1 = self.addSwitch('s1', cls=OVSSwitch, protocols='OpenFlow13')
-        s2 = self.addSwitch('s2', cls=OVSSwitch, protocols='OpenFlow13')
-        s3 = self.addSwitch('s3', cls=OVSSwitch, protocols='OpenFlow13')
+        s1 = self.addSwitch('s1', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
+        s2 = self.addSwitch('s2', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
+        s3 = self.addSwitch('s3', cls=OVSSwitch, protocols='OpenFlow13', failMode='standalone')
         
         # Edge S1 Hosts (h1-h5) - Business units
         h1 = self.addHost('h1', ip='10.0.1.1/24', mac='00:00:00:00:00:01')
@@ -144,7 +144,7 @@ def run_enterprise_simulation():
     target_port = get_controller_port()
     print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
     
-    # Connect to Ryu controller
+    # Connect to Ryu controller with waitConnected=False
     net = Mininet(topo=topo, 
                   controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port),
                   switch=OVSSwitch,
