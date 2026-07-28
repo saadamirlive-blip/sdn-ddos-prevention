@@ -64,17 +64,21 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         self.scaler = self.load_scaler()
         self.model_loaded = self.ml_model is not None and self.scaler is not None
         
-        # Detection thresholds
-        self.PPS_THRESHOLD = 5000
-        self.BPS_THRESHOLD = 10000000  # 10 MB/s
+        # Detection thresholds (Realistic attack rates)
+        self.PPS_THRESHOLD = 1000   # > 1000 Packets/sec indicates DDoS attack
+        self.BPS_THRESHOLD = 5000000  # > 5 MB/s indicates DDoS attack
         self.ATTACK_DURATION_THRESHOLD = 10
+        
+        # Track packet rates per source IP over 1-second windows
+        self.pkt_counts = defaultdict(int)
+        self.last_reset = time.time()
         
         # Initialize monitoring threads
         self.monitor_thread = hub.spawn(self._monitor)
         
         logger.info("✅ Enterprise Security Controller Initialized")
         logger.info(f"   ML Model Loaded: {self.model_loaded}")
-        logger.info(f"   Threshold Detection: Enabled")
+        logger.info(f"   Threshold Detection: Enabled (PPS > {self.PPS_THRESHOLD})")
 
     def load_model(self):
         """Load trained ML model"""
@@ -122,20 +126,10 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                 ip_dst = match.get('ipv4_dst')
                 
                 if ip_src and ip_dst and ip_src != '0.0.0.0':
-                    pps = stat.packet_count / 3
-                    bps = stat.byte_count / 3
+                    pps = stat.packet_count / max(1, stat.duration_sec)
+                    bps = stat.byte_count / max(1, stat.duration_sec)
                     duration = stat.duration_sec
                     proto = match.get('ip_proto', 0)
-                    
-                    flow_key = f"{ip_src}->{ip_dst}"
-                    self.flow_stats[dpid][flow_key] = {
-                        'pps': pps,
-                        'bps': bps,
-                        'packet_count': stat.packet_count,
-                        'byte_count': stat.byte_count,
-                        'duration': duration,
-                        'proto': proto
-                    }
                     
                     if ip_src not in self.attack_sources:
                         self._detect_anomaly(dpid, ip_src, ip_dst, pps, bps, duration, proto)
@@ -187,7 +181,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             detection_time = time.time() - start_time
             self.detection_times.append(detection_time)
             
-            logger.warning(f"⚠️ Attack Detected: {src_ip} -> {dst_ip}")
+            logger.warning(f"⚠️ DDoS Attack Detected: {src_ip} -> {dst_ip}")
             logger.warning(f"   Reason: {anomaly_reason}")
             
             self._trigger_containment(dpid, src_ip, dst_ip, anomaly_reason)
@@ -257,7 +251,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Handle incoming packets with explicit FlowMod and immediate PacketOut delivery"""
+        """Handle incoming packets with standard OpenFlow 1.3 L2 learning and anomaly detection"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -289,7 +283,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
             self._add_flow(datapath, 1, match, actions, idle_timeout=300)
                 
-        # ALWAYS send PacketOut explicitly to ensure 100% immediate packet delivery
+        # Send PacketOut explicitly to ensure immediate packet delivery
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
@@ -298,17 +292,23 @@ class EnterpriseSecurityController(app_manager.RyuApp):
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
         
-        # Check IP packets for DDoS attacks
+        # Check IP packets for DDoS attacks using real PPS rate calculation
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt:
             src_ip = ip_pkt.src_ip
             dst_ip = ip_pkt.dst_ip
             proto = ip_pkt.proto
             
-            if src_ip not in self.attack_sources:
-                self.flow_stats[dpid][f"{src_ip}->{dst_ip}"]['pps'] += 1
-                if self.flow_stats[dpid][f"{src_ip}->{dst_ip}"]['pps'] > 15:
-                    self._detect_anomaly(dpid, src_ip, dst_ip, self.flow_stats[dpid][f"{src_ip}->{dst_ip}"]['pps'] * 100, 1000000, 1, proto)
+            now = time.time()
+            if now - self.last_reset > 1.0:
+                self.pkt_counts.clear()
+                self.last_reset = now
+                
+            self.pkt_counts[src_ip] += 1
+            real_pps = self.pkt_counts[src_ip]
+            
+            if src_ip not in self.attack_sources and real_pps > self.PPS_THRESHOLD:
+                self._detect_anomaly(dpid, src_ip, dst_ip, real_pps, 5000000, 1, proto)
 
 if __name__ == '__main__':
     from ryu.cmd.manager import main
