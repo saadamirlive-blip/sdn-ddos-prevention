@@ -14,26 +14,14 @@ import socket
 import subprocess
 import re
 
-class FastOVSSwitch(OVSSwitch):
-    """Custom OVS Switch that uses --no-wait and --timeout=2 to prevent container freezes"""
-    def __init__(self, name, **params):
-        params['protocols'] = 'OpenFlow13'
-        super(FastOVSSwitch, self).__init__(name, **params)
-
-    def vsctl(self, *args, **kwargs):
-        cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
-        return self.cmd(*cmd)
-
 def clean_leftover_network():
     """Fast non-blocking removal of stale OVS bridges & restart OVS service"""
-    # 1. Restart Open vSwitch service to ensure daemon is active
     try:
         subprocess.run(['service', 'openvswitch-switch', 'restart'], 
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
     except Exception:
         pass
 
-    # 2. Delete stale OVS bridges
     for br in ['s0', 's1', 's2', 's3']:
         try:
             subprocess.run(['ovs-vsctl', '--no-wait', '--timeout=1', '--if-exists', 'del-br', br], 
@@ -41,7 +29,6 @@ def clean_leftover_network():
         except Exception:
             pass
             
-    # 3. Delete stale kernel veth interfaces
     try:
         res = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=2)
         ifnames = re.findall(r'\b([sh]\d+-eth\d+)\b', res.stdout)
@@ -51,29 +38,17 @@ def clean_leftover_network():
     except Exception:
         pass
 
-def get_controller_port():
-    """Detect if Ryu is listening on port 6653 or 6633"""
-    for port in [6653, 6633]:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(0.5)
-                if s.connect_ex(('127.0.0.1', port)) == 0:
-                    return port
-        except Exception:
-            pass
-    return 6653  # Default OpenFlow 1.3 port
-
 class EnterpriseTopo(Topo):
     """Enterprise Network Topology - 4 OpenFlow Switches, 13 Hosts"""
     
     def build(self):
         # Core Switch
-        s0 = self.addSwitch('s0', cls=FastOVSSwitch)
+        s0 = self.addSwitch('s0', protocols='OpenFlow13')
         
         # Edge Switches
-        s1 = self.addSwitch('s1', cls=FastOVSSwitch)
-        s2 = self.addSwitch('s2', cls=FastOVSSwitch)
-        s3 = self.addSwitch('s3', cls=FastOVSSwitch)
+        s1 = self.addSwitch('s1', protocols='OpenFlow13')
+        s2 = self.addSwitch('s2', protocols='OpenFlow13')
+        s3 = self.addSwitch('s3', protocols='OpenFlow13')
         
         # Edge S1 Hosts (h1-h5) - Business units (10.0.0.1 - 10.0.0.5)
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
@@ -150,24 +125,13 @@ def run_enterprise_simulation():
     # Create topology
     topo = EnterpriseTopo()
     
-    # Auto-detect active controller port (6653 or 6633)
-    target_port = get_controller_port()
-    print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
-    
-    # Connect to Ryu controller using FastOVSSwitch
+    # Standard Mininet initialization with RemoteController on port 6653
     net = Mininet(topo=topo, 
-                  controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port),
-                  switch=FastOVSSwitch,
-                  waitConnected=False)
+                  controller=lambda name: RemoteController(name, ip='127.0.0.1', port=6653),
+                  switch=OVSSwitch)
     
     # Start network
     net.start()
-    
-    # Ensure exact controller target on single active port to prevent OVS reconnect loops
-    for s in ['s0', 's1', 's2', 's3']:
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set-fail-mode', s, 'standalone'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     # Show topology information
     print("\n" + "-"*70)
@@ -189,7 +153,7 @@ def run_enterprise_simulation():
     print("\n" + "-"*70)
     print("CONTROLLER INFORMATION")
     print("-"*70)
-    print(f"  Ryu Controller: 127.0.0.1:{target_port}")
+    print("  Ryu Controller: 127.0.0.1:6653")
     print("  OpenFlow Version: 1.3")
     print("  Security Modules: ML Detection, Dynamic Segmentation, Automated Containment")
     
