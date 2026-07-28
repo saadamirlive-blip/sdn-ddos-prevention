@@ -82,7 +82,6 @@ def patch_ryu_dir(target_dir):
                 if 'from eventlet.wsgi import ALREADY_HANDLED' in new_content:
                     lines = new_content.splitlines()
                     out_lines = []
-                    skip_next = 0
                     for line in lines:
                         if 'from eventlet.wsgi import ALREADY_HANDLED' in line:
                             out_lines.append('    try:')
@@ -118,6 +117,15 @@ if [ -d "/tmp/ryu-4.34/ryu" ]; then
     cp -r /tmp/ryu-4.34/ryu "$SITE_PACKAGES/"
     echo "✅ ryu module copied directly to $SITE_PACKAGES/ryu" | tee -a "$LOG"
 fi
+
+# Symlink system mininet package into virtual environment site-packages
+for path in /usr/lib/python3*/dist-packages/mininet /usr/local/lib/python3*/dist-packages/mininet; do
+    if [ -d "$path" ]; then
+        ln -sf "$path" "$SITE_PACKAGES/"
+        echo "✅ mininet symlinked to $SITE_PACKAGES/mininet" | tee -a "$LOG"
+        break
+    fi
+done
 
 # Run patch directly on installed site-packages/ryu to guarantee clean state
 python3 - <<'PY'
