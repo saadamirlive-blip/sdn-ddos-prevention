@@ -15,17 +15,21 @@ import subprocess
 import re
 
 class NonBlockingOVSSwitch(OVSSwitch):
-    """Custom OVS Switch that attaches ports and configures OpenFlow 1.3 non-blockingly"""
+    """Custom OVS Switch that attaches ports, brings link interfaces UP, and configures OpenFlow 1.3 non-blockingly"""
     def start(self, controllers):
-        """Instant non-blocking switch startup"""
+        """Instant non-blocking switch startup with link UP state"""
         intfs = [intf.name for intf in self.intfList() if intf.name != 'lo']
         
         # Create bridge and add interfaces
         self.cmd('ovs-vsctl --no-wait --if-exists del-br', self.name)
         self.cmd('ovs-vsctl --no-wait add-br', self.name)
+        
         for intf in intfs:
             self.cmd('ovs-vsctl --no-wait add-port', self.name, intf)
+            self.cmd('ip link set', intf, 'up')
             
+        self.cmd('ip link set', self.name, 'up')
+        
         # Configure OpenFlow 1.3 and RemoteController with --no-wait
         self.cmd('ovs-vsctl --no-wait set bridge', self.name, 'protocols=OpenFlow13')
         if controllers:
@@ -176,6 +180,10 @@ def run_enterprise_simulation():
     
     # Start network
     net.start()
+    
+    # Populate static ARP entries for instant zero-loss resolution
+    print("Configuring static ARP entries on all hosts...")
+    net.staticArp()
     
     # Show topology information
     print("\n" + "-"*70)
