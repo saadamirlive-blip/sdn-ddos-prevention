@@ -33,9 +33,9 @@ sudo -E apt-get install -y -o Dpkg::Options::="--force-confold" -qq \
 echo "Starting Open vSwitch..." | tee -a "$LOG"
 sudo service openvswitch-switch start || true
 
-# 3. Python Virtual Environment
-echo "Setting up Python virtual environment..." | tee -a "$LOG"
-sudo rm -rf "$VENV" || true
+# 3. Python Virtual Environment (Wipe and recreate cleanly)
+echo "Setting up clean Python virtual environment at $VENV..." | tee -a "$LOG"
+sudo rm -rf "$VENV" /tmp/ryu* || true
 sudo python3 -m venv "$VENV" || true
 sudo chown -R $(whoami) "$VENV" 2>/dev/null || true
 source "$VENV/bin/activate" || true
@@ -45,15 +45,14 @@ echo "Installing base Python tools & Ryu dependencies..." | tee -a "$LOG"
 pip install --upgrade pip wheel setuptools pbr "eventlet>=0.35.0" netaddr msgpack oslo.config routes tinyrpc webob ovs paramiko -q || true
 
 echo "Downloading and patching Ryu for Python 3.12 compatibility..." | tee -a "$LOG"
-rm -rf /tmp/ryu*
 curl -sSL https://files.pythonhosted.org/packages/source/r/ryu/ryu-4.34.tar.gz -o /tmp/ryu-4.34.tar.gz || wget -q https://files.pythonhosted.org/packages/source/r/ryu/ryu-4.34.tar.gz -O /tmp/ryu-4.34.tar.gz
 tar -xzf /tmp/ryu-4.34.tar.gz -C /tmp
 
 # Comprehensive Python 3.12 compatibility patch for Ryu codebase
 python3 - <<'PY'
-import os, re, site
+import os, re
 
-def patch_ryu_dir(target_dir):
+def apply_patches(target_dir):
     if not os.path.exists(target_dir):
         return
     print(f"Patching Ryu files in {target_dir}...")
@@ -78,31 +77,18 @@ def patch_ryu_dir(target_dir):
                 # Fix inspect.getargspec removed in Python 3.11+
                 new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
                 
-                # Clean line-by-line fix for eventlet.wsgi ALREADY_HANDLED import in wsgi.py
-                if 'from eventlet.wsgi import ALREADY_HANDLED' in new_content:
-                    lines = new_content.splitlines()
-                    out_lines = []
-                    for line in lines:
-                        if 'from eventlet.wsgi import ALREADY_HANDLED' in line:
-                            out_lines.append('    try:')
-                            out_lines.append('        from eventlet.wsgi import ALREADY_HANDLED')
-                            out_lines.append('    except Exception:')
-                            out_lines.append('        ALREADY_HANDLED = object()')
-                        elif 'except Exception:' in line and 'ALREADY_HANDLED' in line:
-                            continue
-                        elif 'ALREADY_HANDLED = object()' in line:
-                            continue
-                        elif 'try:' in line and len(out_lines) > 0 and 'class _AlreadyHandledResponse' in out_lines[-1]:
-                            continue
-                        else:
-                            out_lines.append(line)
-                    new_content = '\n'.join(out_lines) + '\n'
+                # Fix eventlet.wsgi ALREADY_HANDLED import with exact dynamic indentation matching
+                new_content = re.sub(
+                    r'(\s+)from eventlet\.wsgi import ALREADY_HANDLED',
+                    r'\1try:\n\1    from eventlet.wsgi import ALREADY_HANDLED\n\1except Exception:\n\1    ALREADY_HANDLED = object()',
+                    new_content
+                )
                 
                 if new_content != content:
                     with open(filepath, 'w', encoding='utf-8') as f:
                         f.write(new_content)
 
-patch_ryu_dir('/tmp/ryu-4.34/ryu')
+apply_patches('/tmp/ryu-4.34/ryu')
 
 PY
 
@@ -146,24 +132,11 @@ if os.path.exists(ryu_dir):
                 new_content = re.sub(r'collections\.(MutableMapping|Mapping|Sequence|Set|MutableSet|Callable)', r'collections.abc.\1', new_content)
                 new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
                 
-                if 'from eventlet.wsgi import ALREADY_HANDLED' in new_content:
-                    lines = new_content.splitlines()
-                    out_lines = []
-                    for line in lines:
-                        if 'from eventlet.wsgi import ALREADY_HANDLED' in line:
-                            out_lines.append('    try:')
-                            out_lines.append('        from eventlet.wsgi import ALREADY_HANDLED')
-                            out_lines.append('    except Exception:')
-                            out_lines.append('        ALREADY_HANDLED = object()')
-                        elif 'except Exception:' in line and 'ALREADY_HANDLED' in line:
-                            continue
-                        elif 'ALREADY_HANDLED = object()' in line:
-                            continue
-                        elif 'try:' in line and len(out_lines) > 0 and 'class _AlreadyHandledResponse' in out_lines[-1]:
-                            continue
-                        else:
-                            out_lines.append(line)
-                    new_content = '\n'.join(out_lines) + '\n'
+                new_content = re.sub(
+                    r'(\s+)from eventlet\.wsgi import ALREADY_HANDLED',
+                    r'\1try:\n\1    from eventlet.wsgi import ALREADY_HANDLED\n\1except Exception:\n\1    ALREADY_HANDLED = object()',
+                    new_content
+                )
                 
                 if new_content != content:
                     with open(filepath, 'w', encoding='utf-8') as f:
