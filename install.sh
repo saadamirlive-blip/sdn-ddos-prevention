@@ -83,9 +83,16 @@ for root, dirs, files in os.walk(ryu_dir):
 print("Patch complete!")
 PY
 
-# Install patched Ryu package
+# Install patched Ryu package into site-packages
 cd /tmp/ryu-4.34
 pip install . --no-build-isolation --no-deps -q || python setup.py install -q || true
+
+# Direct site-packages deployment guarantee
+SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
+if [ -d "/tmp/ryu-4.34/ryu" ]; then
+    cp -r /tmp/ryu-4.34/ryu "$SITE_PACKAGES/"
+    echo "✅ ryu module copied directly to $SITE_PACKAGES/ryu" | tee -a "$LOG"
+fi
 
 # Explicitly create ryu-manager binary wrapper to guarantee availability
 cat << 'EOF' > /opt/sdn_venv/bin/ryu-manager
