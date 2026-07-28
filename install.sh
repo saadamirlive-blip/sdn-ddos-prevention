@@ -16,7 +16,7 @@ echo "iperf3 iperf3/auto-run boolean false" | sudo debconf-set-selections 2>/dev
 
 sudo -E apt-get update -qq || true
 sudo -E apt-get install -y -o Dpkg::Options::="--force-confold" -qq \
-    git curl wget python3 python3-pip python3-venv python3-dev python3.10 python3.10-venv python3.10-dev \
+    git curl wget python3 python3-pip python3-venv python3-dev \
     openvswitch-switch openvswitch-testcontroller \
     mininet \
     hping3 iperf3 iperf \
@@ -29,29 +29,66 @@ sudo -E apt-get install -y -o Dpkg::Options::="--force-confold" -qq \
 echo "Starting Open vSwitch..." | tee -a "$LOG"
 sudo service openvswitch-switch start || true
 
-# 3. Python Virtual Environment (Prefer Python 3.10/3.11 for Ryu compatibility)
+# 3. Python Virtual Environment
 echo "Setting up Python virtual environment..." | tee -a "$LOG"
-PY_BIN=$(command -v python3.10 || command -v python3.11 || command -v python3)
-echo "Using Python binary: $PY_BIN" | tee -a "$LOG"
-
 sudo rm -rf "$VENV" || true
-sudo "$PY_BIN" -m venv "$VENV" || true
+sudo python3 -m venv "$VENV" || true
 sudo chown -R $(whoami) "$VENV" 2>/dev/null || true
 source "$VENV/bin/activate" || true
 
-# 4. Install Python Packages
-echo "Installing Python requirements..." | tee -a "$LOG"
-pip install --upgrade pip "setuptools<65.0.0" wheel pbr "eventlet==0.30.2" -q || true
-pip install "ryu" -q || pip install "ryu==4.34" --no-build-isolation -q || true
+# 4. Install Base Tools & Patch Ryu for Python 3.12
+echo "Installing base Python tools..." | tee -a "$LOG"
+pip install --upgrade pip wheel setuptools pbr "eventlet==0.30.2" -q || true
+
+echo "Downloading and patching Ryu for Python 3.12 compatibility..." | tee -a "$LOG"
+rm -rf /tmp/ryu*
+curl -sSL https://files.pythonhosted.org/packages/source/r/ryu/ryu-4.34.tar.gz -o /tmp/ryu-4.34.tar.gz || wget -q https://files.pythonhosted.org/packages/source/r/ryu/ryu-4.34.tar.gz -O /tmp/ryu-4.34.tar.gz
+tar -xzf /tmp/ryu-4.34.tar.gz -C /tmp
+
+# Comprehensive Python 3.12 compatibility patch for Ryu codebase
+python3 - <<'PY'
+import os, re
+
+ryu_dir = '/tmp/ryu-4.34'
+print(f"Patching Ryu files in {ryu_dir} for Python 3.12...")
+
+for root, dirs, files in os.walk(ryu_dir):
+    for file in files:
+        if file.endswith('.py'):
+            filepath = os.path.join(root, file)
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            new_content = content
+            # 1. Fix collections.MutableMapping & friends removed in Python 3.10+
+            new_content = re.sub(r'collections\.(MutableMapping|Mapping|Sequence|Set|MutableSet|Callable)', r'collections.abc.\1', new_content)
+            # 2. Fix inspect.getargspec removed in Python 3.11+
+            new_content = new_content.replace('inspect.getargspec', 'inspect.getfullargspec')
+            # 3. Fix easy_install.get_script_args removed in setuptools 65+
+            new_content = new_content.replace('easy_install.get_script_args', 'getattr(easy_install, "get_script_args", lambda *a, **k: [])')
+            
+            if new_content != content:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+
+print("Patch complete!")
+PY
+
+# Install patched Ryu without build isolation (bypasses pkgutil.ImpImporter error)
+cd /tmp/ryu-4.34
+pip install . --no-build-isolation --no-deps -q || python setup.py install -q || true
+
+# 5. Install Remaining Python Requirements
+echo "Installing ML & analysis packages..." | tee -a "$LOG"
 pip install scikit-learn pandas numpy matplotlib seaborn joblib networkx autopep8 ipykernel -q || true
 
-# 5. Pre-train ML Model
+# 6. Pre-train ML Model
 echo "Pre-training ML model..." | tee -a "$LOG"
-cd controller 2>/dev/null || cd /workspaces/sdn-ddos-prevention/controller 2>/dev/null || true
+cd /workspaces/sdn-ddos-prevention/controller 2>/dev/null || cd /workspaces/sdn_security_project/controller 2>/dev/null || cd controller 2>/dev/null || true
 python3 train_model.py || true
 
-# 6. Add default alias for venv activation
-echo "source /opt/sdn_venv/bin/activate 2>/dev/null || true" >> ~/.bashrc
+# 7. Add default alias for venv activation
+grep -qF "sdn_venv" ~/.bashrc || echo "source /opt/sdn_venv/bin/activate 2>/dev/null || true" >> ~/.bashrc
 
 echo "=== Setup Completed Successfully ✅ ===" | tee -a "$LOG"
 echo "To start controller: source /opt/sdn_venv/bin/activate && cd controller && ryu-manager --verbose enterprise_security_controller.py"
