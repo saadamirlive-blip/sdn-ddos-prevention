@@ -34,7 +34,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Datapath management
         self.datapaths = {}
         
-        # Pre-populated MAC-to-Port maps for 4-switch enterprise topology
+        # Pre-populated MAC-to-Port maps for 4-switch enterprise topology (Using exact decimal MAC formatting :02d)
         # DPID 1 = s0 (Core), DPID 2 = s1 (Edge 1), DPID 3 = s2 (Edge 2), DPID 4 = s3 (Edge 3)
         self.mac_to_port = {
             1: {},  # s0 Core
@@ -45,7 +45,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         
         # Populate s1 (DPID 2): h1-h5 local (ports 2-6), all others via port 1 (s0)
         for i in range(1, 14):
-            mac = f"00:00:00:00:00:{i:02x}"
+            mac = f"00:00:00:00:00:{i:02d}"
             if 1 <= i <= 5:
                 self.mac_to_port[2][mac] = i + 1
             else:
@@ -53,7 +53,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
         # Populate s2 (DPID 3): h6-h10 local (ports 2-6), all others via port 1 (s0)
         for i in range(1, 14):
-            mac = f"00:00:00:00:00:{i:02x}"
+            mac = f"00:00:00:00:00:{i:02d}"
             if 6 <= i <= 10:
                 self.mac_to_port[3][mac] = (i - 5) + 1
             else:
@@ -61,7 +61,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
         # Populate s3 (DPID 4): h11-h13 local (ports 2-4), all others via port 1 (s0)
         for i in range(1, 14):
-            mac = f"00:00:00:00:00:{i:02x}"
+            mac = f"00:00:00:00:00:{i:02d}"
             if 11 <= i <= 13:
                 self.mac_to_port[4][mac] = (i - 10) + 1
             else:
@@ -69,7 +69,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
         # Populate s0 Core (DPID 1): h1-h5 via port 1 (s1), h6-h10 via port 2 (s2), h11-h13 via port 3 (s3)
         for i in range(1, 14):
-            mac = f"00:00:00:00:00:{i:02x}"
+            mac = f"00:00:00:00:00:{i:02d}"
             if 1 <= i <= 5:
                 self.mac_to_port[1][mac] = 1
             elif 6 <= i <= 10:
