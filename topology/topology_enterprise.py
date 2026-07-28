@@ -16,6 +16,10 @@ import re
 
 class FastOVSSwitch(OVSSwitch):
     """Custom OVS Switch that uses --no-wait and --timeout=2 to prevent container freezes"""
+    def __init__(self, name, **params):
+        params['protocols'] = 'OpenFlow13'
+        super(FastOVSSwitch, self).__init__(name, **params)
+
     def vsctl(self, *args, **kwargs):
         cmd = ['ovs-vsctl', '--no-wait', '--timeout=2'] + list(args)
         return self.cmd(*cmd)
@@ -156,14 +160,14 @@ def run_enterprise_simulation():
                   switch=FastOVSSwitch,
                   waitConnected=False)
     
-    # Start network instantly
+    # Start network
     net.start()
     
-    # Configure secure fail mode, OpenFlow 1.3 protocol, and controller links (6653 and 6633) on all switches
+    # Ensure exact controller target on single active port to prevent OVS reconnect loops
     for s in ['s0', 's1', 's2', 's3']:
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set-fail-mode', s, 'secure'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-fail-mode', s, 'standalone'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, 'tcp:127.0.0.1:6653', 'tcp:127.0.0.1:6633'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     # Show topology information
     print("\n" + "-"*70)
@@ -185,7 +189,7 @@ def run_enterprise_simulation():
     print("\n" + "-"*70)
     print("CONTROLLER INFORMATION")
     print("-"*70)
-    print(f"  Ryu Controller: 127.0.0.1 (Ports 6653 / 6633)")
+    print(f"  Ryu Controller: 127.0.0.1:{target_port}")
     print("  OpenFlow Version: 1.3")
     print("  Security Modules: ML Detection, Dynamic Segmentation, Automated Containment")
     
