@@ -15,6 +15,27 @@ import socket
 import subprocess
 import re
 
+def ensure_ovs_running():
+    """Ensure Open vSwitch service is running before topology initialization"""
+    try:
+        res = subprocess.run(['ovs-vsctl', 'show'], capture_output=True, text=True, timeout=1)
+        if res.returncode == 0:
+            return
+    except Exception:
+        pass
+
+    print("🔧 Starting Open vSwitch daemon service...")
+    try:
+        subprocess.run(['service', 'openvswitch-switch', 'start'], 
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except Exception:
+        pass
+    try:
+        subprocess.run(['/etc/init.d/openvswitch-switch', 'start'], 
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except Exception:
+        pass
+
 class NonBlockingOVSSwitch(OVSSwitch):
     """Custom OVS Switch that attaches ports, brings link interfaces UP, and configures OpenFlow 1.3 non-blockingly"""
     def start(self, controllers):
@@ -41,6 +62,8 @@ class NonBlockingOVSSwitch(OVSSwitch):
 
 def clean_leftover_network():
     """Fast non-blocking interface and bridge cleanup without systemd service hangs"""
+    ensure_ovs_running()
+    
     for br in ['s0', 's1', 's2', 's3']:
         try:
             subprocess.run(['ovs-vsctl', '--no-wait', '--timeout=1', '--if-exists', 'del-br', br], 
