@@ -130,10 +130,11 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         self.add_flow(datapath, 0, match, actions, idle_timeout=0)
         
         # Pre-install exact L2 flow entries for 100% instant zero-loss routing across all switches
+        # Using decimal :02d MAC string formatting to match host definitions (h10='...:10', h11='...:11', etc.)
         if dpid == 1:
             # s0 Core switch: route h1-h5 to s1 (port 1), h6-h10 to s2 (port 2), h11-h13 to s3 (port 3)
             for i in range(1, 14):
-                mac = f"00:00:00:00:00:{i:02x}"
+                mac = f"00:00:00:00:00:{i:02d}"
                 port = 1 if 1 <= i <= 5 else (2 if 6 <= i <= 10 else 3)
                 m = parser.OFPMatch(eth_dst=mac)
                 a = [parser.OFPActionOutput(port)]
@@ -142,7 +143,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         elif dpid == 2:
             # s1 Edge switch: route h1-h5 to local ports 2..6, all others to s0 Core (port 1)
             for i in range(1, 14):
-                mac = f"00:00:00:00:00:{i:02x}"
+                mac = f"00:00:00:00:00:{i:02d}"
                 port = (i + 1) if 1 <= i <= 5 else 1
                 m = parser.OFPMatch(eth_dst=mac)
                 a = [parser.OFPActionOutput(port)]
@@ -151,7 +152,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         elif dpid == 3:
             # s2 Edge switch: route h6-h10 to local ports 2..6, all others to s0 Core (port 1)
             for i in range(1, 14):
-                mac = f"00:00:00:00:00:{i:02x}"
+                mac = f"00:00:00:00:00:{i:02d}"
                 port = ((i - 5) + 1) if 6 <= i <= 10 else 1
                 m = parser.OFPMatch(eth_dst=mac)
                 a = [parser.OFPActionOutput(port)]
@@ -160,7 +161,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         elif dpid == 4:
             # s3 Edge switch: route h11-h13 to local ports 2..4, all others to s0 Core (port 1)
             for i in range(1, 14):
-                mac = f"00:00:00:00:00:{i:02x}"
+                mac = f"00:00:00:00:00:{i:02d}"
                 port = ((i - 10) + 1) if 11 <= i <= 13 else 1
                 m = parser.OFPMatch(eth_dst=mac)
                 a = [parser.OFPActionOutput(port)]
