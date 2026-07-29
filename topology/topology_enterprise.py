@@ -5,7 +5,7 @@ Enterprise Network Topology
 
 from mininet.topo import Topo
 from mininet.net import Mininet
-from mininet.node import RemoteController, OVSSwitch, Host
+from mininet.node import OVSSwitch, Host
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 import time
@@ -33,10 +33,8 @@ class NonBlockingOVSSwitch(OVSSwitch):
         
         # Configure OpenFlow 1.3 and RemoteController with --no-wait
         self.cmd('ovs-vsctl --no-wait set bridge', self.name, 'protocols=OpenFlow13')
-        if controllers:
-            c = controllers[0]
-            port = getattr(c, 'port', 6653)
-            self.cmd('ovs-vsctl --no-wait set-controller', self.name, f'tcp:127.0.0.1:{port}')
+        target_port = getattr(self, 'target_controller_port', 6653)
+        self.cmd('ovs-vsctl --no-wait set-controller', self.name, f'tcp:127.0.0.1:{target_port}')
 
     def connected(self):
         return True
@@ -59,8 +57,8 @@ def clean_leftover_network():
     except Exception:
         pass
 
-def ensure_ryu_running():
-    """Check if Ryu is listening; if not, spawn it in background automatically"""
+def get_controller_port():
+    """Detect if Ryu is listening on port 6653 or 6633"""
     for port in [6653, 6633]:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -69,20 +67,7 @@ def ensure_ryu_running():
                     return port
         except Exception:
             pass
-            
-    print("🚀 Auto-starting Ryu Security Controller in background...")
-    try:
-        controller_script = os.path.abspath(os.path.join(os.path.dirname(__file__), '../controller/enterprise_security_controller.py'))
-        venv_ryu = '/opt/sdn_venv/bin/ryu-manager'
-        ryu_cmd = venv_ryu if os.path.exists(venv_ryu) else 'ryu-manager'
-        
-        subprocess.Popen([ryu_cmd, controller_script],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(2)
-    except Exception as e:
-        print(f"Warning starting controller: {e}")
-        
-    return 6653
+    return 6653  # Default OpenFlow 1.3 port
 
 class EnterpriseTopo(Topo):
     """Enterprise Network Topology - 4 OpenFlow Switches, 13 Hosts"""
@@ -166,24 +151,33 @@ def run_enterprise_simulation():
     print("\nCleaning leftover interfaces...")
     clean_leftover_network()
     
-    # Auto-detect or auto-start Ryu Controller
-    target_port = ensure_ryu_running()
-    print(f"Connecting to Remote Controller at 127.0.0.1:{target_port}...")
+    # Detect active Ryu Controller port
+    target_port = get_controller_port()
+    print(f"Targeting Ryu Controller at 127.0.0.1:{target_port}...")
     
     print("\nStarting network topology...")
     
     # Create topology
     topo = EnterpriseTopo()
     
-    # Non-blocking Mininet topology startup with RemoteController and checkListening=False
+    # Instant Mininet startup without controller socket polling
     net = Mininet(topo=topo, 
-                  controller=lambda name: RemoteController(name, ip='127.0.0.1', port=target_port, checkListening=False),
+                  controller=None,
                   switch=NonBlockingOVSSwitch,
                   waitConnected=False)
     
+    # Bind target controller port to switches
+    for s in net.switches:
+        s.target_controller_port = target_port
+
     # Start network
     net.start()
     
+    # Force set OpenFlow 1.3 controller binding on all switches
+    for s in ['s0', 's1', 's2', 's3']:
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set', 'bridge', s, 'protocols=OpenFlow13'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['ovs-vsctl', '--no-wait', 'set-controller', s, f'tcp:127.0.0.1:{target_port}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     # Populate static ARP entries for instant zero-loss resolution
     print("Configuring static ARP entries on all hosts...")
     net.staticArp()
@@ -235,7 +229,7 @@ def run_enterprise_simulation():
     print("\nType 'exit' or press Ctrl+D to end simulation")
     print("="*70)
     
-    # Open CLI for interaction
+    # Open CLI for interaction immediately
     CLI(net)
     
     # Stop network
