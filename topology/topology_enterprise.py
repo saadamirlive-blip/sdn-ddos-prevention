@@ -38,6 +38,8 @@ def ensure_ovs_running():
 
 class NonBlockingOVSSwitch(OVSSwitch):
     """Custom OVS Switch that attaches ports, brings link interfaces UP, and configures OpenFlow 1.3 non-blockingly"""
+    target_controller_port = 6653
+
     def start(self, controllers):
         """Instant non-blocking switch startup with link UP state"""
         intfs = [intf.name for intf in self.intfList() if intf.name != 'lo']
@@ -54,8 +56,8 @@ class NonBlockingOVSSwitch(OVSSwitch):
         
         # Configure OpenFlow 1.3 and RemoteController with --no-wait
         self.cmd('ovs-vsctl --no-wait set bridge', self.name, 'protocols=OpenFlow13')
-        target_port = getattr(self, 'target_controller_port', 6653)
-        self.cmd('ovs-vsctl --no-wait set-controller', self.name, f'tcp:127.0.0.1:{target_port}')
+        port = getattr(self, 'target_controller_port', 6653)
+        self.cmd('ovs-vsctl --no-wait set-controller', self.name, f'tcp:127.0.0.1:{port}')
 
     def connected(self):
         return True
@@ -178,6 +180,9 @@ def run_enterprise_simulation():
     target_port = get_controller_port()
     print(f"Targeting Ryu Controller at 127.0.0.1:{target_port}...")
     
+    # Set class attribute target_controller_port BEFORE net.start()
+    NonBlockingOVSSwitch.target_controller_port = target_port
+    
     print("\nStarting network topology...")
     
     # Create topology
@@ -189,10 +194,6 @@ def run_enterprise_simulation():
                   switch=NonBlockingOVSSwitch,
                   waitConnected=False)
     
-    # Bind target controller port to switches
-    for s in net.switches:
-        s.target_controller_port = target_port
-
     # Start network
     net.start()
     
