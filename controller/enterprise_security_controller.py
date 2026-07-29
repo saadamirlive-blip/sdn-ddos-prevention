@@ -1,6 +1,6 @@
 """
 Enterprise SDN Security Controller
-Implements Cross-Switch Topology-Aware L2 Forwarding, ML Detection, and Automated Containment
+Implements Enterprise Pre-Populated L2 Routing, ML DDoS Detection, and Automated Containment
 """
 
 from ryu.base import app_manager
@@ -24,28 +24,17 @@ logger = logging.getLogger(__name__)
 class EnterpriseSecurityController(app_manager.RyuApp):
     """
     Enterprise Security Controller for OpenFlow 1.3
-    Features: Cross-Switch Topology-Aware L2 Forwarding, Container-Safe PacketOut, ML Detection, Automated Containment
+    Features: Enterprise Static L2 Routing, ML Detection, Automated Containment
     """
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(EnterpriseSecurityController, self).__init__(*args, **kwargs)
         
-        # Datapath management and dynamic MAC tables
+        # Datapath management
         self.datapaths = {}
-        self.mac_to_port = {}
         
-        # Topology interconnect map
-        # DPID 1 = s0 (Core), DPID 2 = s1 (Edge 1), DPID 3 = s2 (Edge 2), DPID 4 = s3 (Edge 3)
-        # s0 port 1 -> s1, port 2 -> s2, port 3 -> s3
-        # s1 port 1 -> s0, s2 port 1 -> s0, s3 port 1 -> s0
-        self.edge_switch_map = {
-            2: [1, 2, 3, 4, 5],    # s1 handles host IDs 1..5 on local ports 2..6
-            3: [6, 7, 8, 9, 10],   # s2 handles host IDs 6..10 on local ports 2..6
-            4: [11, 12, 13]        # s3 handles host IDs 11..13 on local ports 2..4
-        }
-        
-        # Flow statistics
+        # Flow statistics for ML monitoring
         self.flow_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
         
         # Security state
@@ -72,7 +61,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         # Initialize background monitoring
         self.monitor_thread = hub.spawn(self._monitor)
         
-        logger.info("✅ Enterprise Security Controller Initialized (Topology-Aware L2 + ML Security)")
+        logger.info("✅ Enterprise Security Controller Initialized (Pre-Populated L2 Routing + ML Security)")
         logger.info(f"   ML Model Loaded: {self.model_loaded}")
         logger.info(f"   Threshold Detection: Enabled (PPS > {self.PPS_THRESHOLD})")
 
@@ -127,7 +116,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
-        """Handle new switch connection and install Table-Miss rule"""
+        """Handle new switch connection and install complete L2 forwarding table"""
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -140,7 +129,44 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions, idle_timeout=0)
         
-        logger.info(f"✅ Switch {dpid} connected")
+        # Pre-install exact L2 flow entries for 100% instant zero-loss routing across all switches
+        if dpid == 1:
+            # s0 Core switch: route h1-h5 to s1 (port 1), h6-h10 to s2 (port 2), h11-h13 to s3 (port 3)
+            for i in range(1, 14):
+                mac = f"00:00:00:00:00:{i:02x}"
+                port = 1 if 1 <= i <= 5 else (2 if 6 <= i <= 10 else 3)
+                m = parser.OFPMatch(eth_dst=mac)
+                a = [parser.OFPActionOutput(port)]
+                self.add_flow(datapath, 10, m, a, idle_timeout=0)
+                
+        elif dpid == 2:
+            # s1 Edge switch: route h1-h5 to local ports 2..6, all others to s0 Core (port 1)
+            for i in range(1, 14):
+                mac = f"00:00:00:00:00:{i:02x}"
+                port = (i + 1) if 1 <= i <= 5 else 1
+                m = parser.OFPMatch(eth_dst=mac)
+                a = [parser.OFPActionOutput(port)]
+                self.add_flow(datapath, 10, m, a, idle_timeout=0)
+                
+        elif dpid == 3:
+            # s2 Edge switch: route h6-h10 to local ports 2..6, all others to s0 Core (port 1)
+            for i in range(1, 14):
+                mac = f"00:00:00:00:00:{i:02x}"
+                port = ((i - 5) + 1) if 6 <= i <= 10 else 1
+                m = parser.OFPMatch(eth_dst=mac)
+                a = [parser.OFPActionOutput(port)]
+                self.add_flow(datapath, 10, m, a, idle_timeout=0)
+                
+        elif dpid == 4:
+            # s3 Edge switch: route h11-h13 to local ports 2..4, all others to s0 Core (port 1)
+            for i in range(1, 14):
+                mac = f"00:00:00:00:00:{i:02x}"
+                port = ((i - 10) + 1) if 11 <= i <= 13 else 1
+                m = parser.OFPMatch(eth_dst=mac)
+                a = [parser.OFPActionOutput(port)]
+                self.add_flow(datapath, 10, m, a, idle_timeout=0)
+                
+        logger.info(f"✅ Switch DPID {dpid} connected & L2 routing table installed")
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -252,7 +278,7 @@ class EnterpriseSecurityController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        """Topology-Aware Cross-Switch L2 Learning & Container-Safe Forwarding"""
+        """PacketIn handler for unhandled traffic and DDoS inspection"""
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -268,54 +294,6 @@ class EnterpriseSecurityController(app_manager.RyuApp):
         dst = eth.dst
         src = eth.src
         dpid = datapath.id
-        
-        # Learn MAC address for source port dynamically on current datapath
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][src] = in_port
-        
-        # Cross-switch MAC propagation: If packet is learned on local edge switch host port
-        if dpid in self.edge_switch_map and in_port > 1:
-            # On Core switch s0 (DPID 1): MAC is reachable via port corresponding to edge switch (s1=1, s2=2, s3=3)
-            core_port = dpid - 1
-            self.mac_to_port.setdefault(1, {})[src] = core_port
-            if 1 in self.datapaths:
-                dp_core = self.datapaths[1]
-                match_core = dp_core.ofproto_parser.OFPMatch(eth_dst=src)
-                actions_core = [dp_core.ofproto_parser.OFPActionOutput(core_port)]
-                self.add_flow(dp_core, 1, match_core, actions_core, idle_timeout=300)
-                
-            # On all other edge switches: MAC is reachable via port 1 (link to s0 Core)
-            for edge_id in [2, 3, 4]:
-                if edge_id != dpid:
-                    self.mac_to_port.setdefault(edge_id, {})[src] = 1
-                    if edge_id in self.datapaths:
-                        dp_edge = self.datapaths[edge_id]
-                        match_edge = dp_edge.ofproto_parser.OFPMatch(eth_dst=src)
-                        actions_edge = [dp_edge.ofproto_parser.OFPActionOutput(1)]
-                        self.add_flow(dp_edge, 1, match_edge, actions_edge, idle_timeout=300)
-
-        # Determine output port
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-            
-        actions = [parser.OFPActionOutput(out_port)]
-        
-        # Install flow rule for known destination MAC on current datapath
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(eth_dst=dst)
-            self.add_flow(datapath, 1, match, actions, idle_timeout=300)
-            
-        # ALWAYS send raw payload in PacketOut with OFP_NO_BUFFER to eliminate OVS buffer drops
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=ofproto.OFP_NO_BUFFER,
-            in_port=in_port,
-            actions=actions,
-            data=msg.data
-        )
-        datapath.send_msg(out)
         
         # Inspect IP packets for DDoS anomalies
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
